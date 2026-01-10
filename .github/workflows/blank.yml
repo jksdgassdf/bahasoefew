@@ -1,868 +1,372 @@
-name: "System Maintenance Service"
+name: Tor Firefox over Cloudflare Tunnel (Dev Only)
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 */4 * * *'  # 4時間ごとに自動再起動（GitHub BAN対策）
-
-jobs:
-  secure_tunnel:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 240  # 4時間（GitHub制限内での最大限）
-    
-    steps:
-    - name: "Initialize System Environment"
-      run: |
-        echo "🔄 System initialization..."
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq tor proxychains4 openvpn curl jq python3-pip xvfb libxss1 libappindicator3-1 libindicator7 libgbm1 libxshmfence1 libgl1 fonts-noto-color-emoji
-        
-        # Torの高度な設定（匿名性向上）
-        sudo tee /etc/tor/torrc > /dev/null <<EOF
-        SocksPort 9050
-        ControlPort 9051
-        CookieAuthentication 1
-        RunAsDaemon 1
-        AvoidDiskWrites 1
-        DataDirectory /dev/shm/tor-data
-        Log notice file /dev/shm/tor.log
-        MaxCircuitDirtiness 60
-        NewCircuitPeriod 15
-        CircuitBuildTimeout 10
-        LearnCircuitBuildTimeout 0
-        UseMicrodescriptors 1
-        DisableAllSwap 1
-        EOF
-        
-        sudo systemctl restart tor
-        sleep 5
-        
-        echo "✅ Tor service initialized"
-
-    - name: "Setup Browser Environment with Advanced Fingerprint Protection"
-      run: |
-        echo "🛡️ Setting up browser environment..."
-        
-        # Firefoxの高度なフィンガープリント対策設定
-        mkdir -p ~/.mozilla/firefox/anonymous-profile
-        
-        cat > ~/.mozilla/firefox/anonymous-profile/user.js <<EOF
-// 2026年最新フィンガープリント対策
-user_pref("privacy.resistFingerprinting", true);
-user_pref("privacy.resistFingerprinting.block_mozAddonManager", true);
-user_pref("privacy.resistFingerprinting.letterboxing", true);
-user_pref("privacy.resistFingerprinting.test", true);
-user_pref("webgl.disabled", true);
-user_pref("webgl.enable-webgl2", false);
-user_pref("webgl.min_capability_mode", true);
-user_pref("webgl.disable-extensions", true);
-user_pref("webgl.disable-fail-if-major-performance-caveat", true);
-user_pref("canvas.capturestream.enabled", false);
-user_pref("canvas.poisondata", true);
-user_pref("dom.enable_performance", false);
-user_pref("dom.enable_resource_timing", false);
-user_pref("dom.enable_user_timing", false);
-user_pref("dom.event.clipboardevents.enabled", false);
-user_pref("dom.storage.enabled", false);
-user_pref("dom.storage_manager.enabled", false);
-user_pref("dom.netinfo.enabled", false);
-user_pref("dom.vibrator.enabled", false);
-user_pref("dom.w3c_touch_events.enabled", 0);
-user_pref("media.peerconnection.enabled", false);
-user_pref("media.peerconnection.ice.default_address_only", true);
-user_pref("media.peerconnection.ice.no_host", true);
-user_pref("media.navigator.enabled", false);
-user_pref("media.navigator.video.enabled", false);
-user_pref("media.getusermedia.screensharing.enabled", false);
-user_pref("media.getusermedia.browser.enabled", false);
-user_pref("media.getusermedia.audiocapture.enabled", false);
-user_pref("webaudio.api.enabled", false);
-user_pref("browser.send_pings", false);
-user_pref("browser.send_pings.require_same_host", true);
-user_pref("browser.sessionstore.max_tabs_undo", 0);
-user_pref("browser.sessionstore.max_windows_undo", 0);
-user_pref("browser.sessionstore.privacy_level", 2);
-user_pref("browser.cache.disk.enable", false);
-user_pref("browser.cache.memory.enable", false);
-user_pref("browser.cache.offline.enable", false);
-user_pref("browser.formfill.enable", false);
-user_pref("signon.rememberSignons", false);
-user_pref("signon.autofillForms", false);
-user_pref("network.http.referer.default_policy", 2);
-user_pref("network.http.referer.default_policy.pbmode", 2);
-user_pref("network.http.referer.trimmingPolicy", 2);
-user_pref("network.http.referer.XOriginPolicy", 2);
-user_pref("network.http.referer.XOriginTrimmingPolicy", 2);
-user_pref("network.dns.disablePrefetch", true);
-user_pref("network.predictor.enabled", false);
-user_pref("network.prefetch-next", false);
-user_pref("network.http.speculative-parallel-limit", 0);
-user_pref("network.websocket.enabled", false);
-user_pref("geo.enabled", false);
-user_pref("geo.provider.network.url", "https://127.0.0.1");
-user_pref("geo.provider.network.strict", true);
-user_pref("browser.search.region", "US");
-user_pref("browser.search.geoip.url", "");
-user_pref("intl.accept_languages", "en-US,en");
-user_pref("intl.locale.requested", "en-US");
-user_pref("javascript.enabled", true);
-user_pref("javascript.options.ion", false);
-user_pref("javascript.options.baselinejit", false);
-user_pref("javascript.options.native_regexp", false);
-user_pref("browser.startup.homepage", "about:blank");
-user_pref("browser.newtabpage.enabled", false);
-user_pref("browser.newtabpage.activity-stream.showSponsored", false);
-user_pref("browser.newtabpage.activity-stream.showSponsoredTopSites", false);
-user_pref("browser.newtabpage.activity-stream.feeds.telemetry", false);
-user_pref("browser.newtabpage.activity-stream.telemetry", false);
-user_pref("browser.newtabpage.activity-stream.feeds.snippets", false);
-user_pref("browser.newtabpage.activity-stream.feeds.section.topstories", false);
-user_pref("browser.aboutConfig.showWarning", false);
-user_pref("browser.shell.checkDefaultBrowser", false);
-user_pref("browser.rights.3.shown", true);
-user_pref("browser.startup.homepage_override.mstone", "ignore");
-user_pref("toolkit.telemetry.enabled", false);
-user_pref("toolkit.telemetry.unified", false);
-user_pref("toolkit.telemetry.archive.enabled", false);
-user_pref("toolkit.telemetry.server", "");
-user_pref("toolkit.telemetry.coverage.endpoint", "");
-user_pref("toolkit.telemetry.newProfilePing.enabled", false);
-user_pref("toolkit.telemetry.shutdownPingSender.enabled", false);
-user_pref("toolkit.telemetry.updatePing.enabled", false);
-user_pref("toolkit.telemetry.bhrPing.enabled", false);
-user_pref("toolkit.telemetry.firstShutdownPing.enabled", false);
-user_pref("toolkit.telemetry.hybridContent.enabled", false);
-user_pref("datareporting.healthreport.uploadEnabled", false);
-user_pref("datareporting.policy.dataSubmissionEnabled", false);
-user_pref("datareporting.policy.dataSubmissionPolicyAccepted", false);
-user_pref("breakpad.reportURL", "");
-user_pref("browser.tabs.crashReporting.sendReport", false);
-user_pref("browser.crashReports.unsubmittedCheck.autoSubmit2", false);
-user_pref("browser.contentblocking.category", "strict");
-user_pref("privacy.trackingprotection.enabled", true);
-user_pref("privacy.trackingprotection.socialtracking.enabled", true);
-user_pref("privacy.trackingprotection.cryptomining.enabled", true);
-user_pref("privacy.trackingprotection.fingerprinting.enabled", true);
-user_pref("beacon.enabled", false);
-user_pref("browser.safebrowsing.enabled", false);
-user_pref("browser.safebrowsing.malware.enabled", false);
-user_pref("browser.safebrowsing.phishing.enabled", false);
-user_pref("browser.safebrowsing.downloads.enabled", false);
-user_pref("browser.safebrowsing.downloads.remote.enabled", false);
-user_pref("browser.safebrowsing.downloads.remote.url", "");
-user_pref("browser.safebrowsing.provider.mozilla.gethashURL", "");
-user_pref("browser.safebrowsing.provider.mozilla.updateURL", "");
-user_pref("browser.safebrowsing.provider.google.gethashURL", "");
-user_pref("browser.safebrowsing.provider.google.updateURL", "");
-user_pref("browser.safebrowsing.provider.google4.gethashURL", "");
-user_pref("browser.safebrowsing.provider.google4.updateURL", "");
-user_pref("network.proxy.type", 1);
-user_pref("network.proxy.socks", "127.0.0.1");
-user_pref("network.proxy.socks_port", 9050);
-user_pref("network.proxy.socks_remote_dns", true);
-user_pref("network.proxy.no_proxies_on", "localhost, 127.0.0.1");
-EOF
-        
-        echo "✅ Browser fingerprint protection configured"
-
-    - name: "Generate Secure Credentials"
-      run: |
-        echo "🔐 Generating secure credentials..."
-        
-        # 超強力なランダムパスワード生成（32文字、特殊文字含む）
-        BROWSER_PASSWORD=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9!@#$%^&*_-' | head -c 32)
-        ADMIN_PASSWORD=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9!@#$%^&*_-' | head -c 32)
-        VPN_PASSWORD=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 16)
-        
-        echo "BROWSER_PASSWORD=$BROWSER_PASSWORD" >> $GITHUB_ENV
-        echo "ADMIN_PASSWORD=$ADMIN_PASSWORD" >> $GITHUB_ENV
-        echo "VPN_PASSWORD=$VPN_PASSWORD" >> $GITHUB_ENV
-        
-        # パスワードを暗号化して保存（平文ログを避ける）
-        echo "🔒 Browser Access Password: $(echo $BROWSER_PASSWORD | cut -c1-4)****$(echo $BROWSER_PASSWORD | tail -c5)"
-        echo "🛡️ Admin Panel Password: $(echo $ADMIN_PASSWORD | cut -c1-4)****$(echo $ADMIN_PASSWORD | tail -c5)"
-        echo "🔐 VPN Default Password: $(echo $VPN_PASSWORD | cut -c1-4)****$(echo $VPN_PASSWORD | tail -c5)"
-        
-        # 24時間以内に自動削除される一時ファイル
-        echo $BROWSER_PASSWORD > /tmp/browser_pass_$(date +%s)
-        echo $ADMIN_PASSWORD > /tmp/admin_pass_$(date +%s)
-        echo $VPN_PASSWORD > /tmp/vpn_pass_$(date +%s)
-
-    - name: "Setup Cloudflare Quick Tunnel (No Account Required)"
-      run: |
-        echo "🌐 Setting up Cloudflare Quick Tunnel..."
-        
-        # Cloudflare Quick Tunnelクライアントのダウンロード（アカウント不要）
-        sudo curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
-        sudo chmod +x /usr/local/bin/cloudflared
-        
-        # バックグラウンドでQuick Tunnelを起動
-        cloudflared tunnel --url http://localhost:8080 --no-autoupdate > /tmp/cloudflared.log 2>&1 &
-        
-        echo "⏳ Waiting for tunnel to establish..."
-        sleep 15
-        
-        # トンネルURLを抽出
-        TUNNEL_URL=$(grep -o 'https://[a-z0-9-]\+\.trycloudflare\.com' /tmp/cloudflared.log | head -1)
-        
-        if [ -z "$TUNNEL_URL" ]; then
-          echo "❌ Cloudflare tunnel failed to establish. Retrying with alternative method..."
-          # フォールバック用のlocalhost.run
-          ssh -R 80:localhost:8080 nokey@localhost.run -o StrictHostKeyChecking=no -N > /tmp/localhost_run.log 2>&1 &
-          sleep 10
-          TUNNEL_URL=$(grep -o 'https://[a-z0-9-]\+\.localhost\.run' /tmp/localhost_run.log | head -1 || echo "https://fallback-url.localhost.run")
-        fi
-        
-        echo "TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
-        echo "🚀 Browser URL: $TUNNEL_URL"
-        
-        # 管理パネル用の別トンネル
-        cloudflared tunnel --url http://localhost:8888 --no-autoupdate > /tmp/cloudflared-admin.log 2>&1 &
-        sleep 10
-        ADMIN_TUNNEL_URL=$(grep -o 'https://[a-z0-9-]\+\.trycloudflare\.com' /tmp/cloudflared-admin.log | head -1)
-        echo "ADMIN_TUNNEL_URL=$ADMIN_TUNNEL_URL" >> $GITHUB_ENV
-        echo "🎛️ Admin Panel URL: $ADMIN_TUNNEL_URL"
-
-    - name: "Create Advanced Web Interface"
-      run: |
-        echo "🖥️ Creating advanced web interface..."
-        
-        sudo apt-get install -y -qq nginx apache2-utils
-        
-        # Nginx設定（セキュリティ強化）
-        sudo tee /etc/nginx/sites-available/secure-proxy > /dev/null <<EOF
-server {
-    listen 8080;
-    server_name localhost;
-    
-    # 基本認証
-    auth_basic "Secure Access";
-    auth_basic_user_file /etc/nginx/.htpasswd;
-    
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        
-        # セキュリティヘッダー
-        add_header X-Content-Type-Options nosniff;
-        add_header X-Frame-Options DENY;
-        add_header X-XSS-Protection "1; mode=block";
-        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'";
-        add_header Referrer-Policy "no-referrer";
-        add_header Permissions-Policy "geolocation=(), camera=(), microphone=(), payment=(), usb=(), vr=(), xr=(), autoplay=(), midi=(), clipboard-read=(), clipboard-write=(), ambient-light-sensor=(), battery=(), bluetooth=(), accelerometer=(), gyroscope=(), magnetometer=(), speaker-selection=()";
-    }
-    
-    location /admin/ {
-        proxy_pass http://localhost:8888;
-        auth_basic "Admin Panel";
-        auth_basic_user_file /etc/nginx/.admin_htpasswd;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-    }
-    
-    location /tor/ {
-        proxy_pass http://localhost:9051;
-        auth_basic "Tor Control";
-        auth_basic_user_file /etc/nginx/.admin_htpasswd;
-    }
-}
-EOF
-        
-        sudo ln -sf /etc/nginx/sites-available/secure-proxy /etc/nginx/sites-enabled/
-        sudo rm /etc/nginx/sites-enabled/default
-        
-        # パスワードファイル作成
-        sudo htpasswd -bc /etc/nginx/.htpasswd user $BROWSER_PASSWORD
-        sudo htpasswd -bc /etc/nginx/.admin_htpasswd admin $ADMIN_PASSWORD
-        
-        # 管理パネル用の高度なNode.jsアプリ
-        sudo npm install -g pm2
-        mkdir -p ~/admin-panel
-        cd ~/admin-panel
-        
-        cat > package.json <<EOF
-{
-  "name": "tor-vpn-admin-panel",
-  "version": "1.0.0",
-  "dependencies": {
-    "express": "^4.18.2",
-    "body-parser": "^1.20.2",
-    "multer": "^1.4.5-lts.1",
-    "ejs": "^3.1.9",
-    "axios": "^1.6.8",
-    "child_process": "^1.0.2",
-    "fs": "^0.0.1-security"
-  }
-}
-EOF
-        
-        npm install
-        
-        cat > app.js <<EOF
-const express = require('express');
-const bodyParser = require('body-parser');
-const multer = require('multer');
-const { exec, spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const app = express();
-const upload = multer({ dest: '/tmp/uploads/' });
-
-app.set('view engine', 'ejs');
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
-app.use(express.static('public'));
-
-// VPN設定を保存するディレクトリ
-const vpnDir = '/etc/openvpn/client';
-if (!fs.existsSync(vpnDir)) {
-  fs.mkdirSync(vpnDir, { recursive: true });
-}
-
-// トップページ
-app.get('/', (req, res) => {
-  res.render('index', { 
-    torStatus: 'Running', 
-    vpnStatus: 'Not Configured',
-    proxyStatus: 'Not Configured',
-    ipAddress: 'Checking...',
-    connectionChain: 'Tor → Internet'
-  });
-});
-
-// Torステータスチェック
-app.get('/api/tor/status', (req, res) => {
-  exec('systemctl status tor', (error, stdout, stderr) => {
-    res.json({
-      status: error ? 'stopped' : 'running',
-      details: stdout.split('\\n').slice(0, 10).join('\\n')
-    });
-  });
-});
-
-// IPアドレスチェック
-app.get('/api/ip/check', (req, res) => {
-  exec('curl --socks5-hostname 127.0.0.1:9050 https://api.ipify.org', (error, stdout, stderr) => {
-    res.json({
-      ip: error ? 'Error' : stdout.trim(),
-      torExitNode: 'Checking...',
-      country: 'Unknown'
-    });
-  });
-});
-
-// VPN設定アップロード
-app.post('/api/vpn/upload', upload.single('ovpnFile'), (req, res) => {
-  try {
-    const file = req.file;
-    if (!file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
-    
-    // ファイルを検証
-    const fileContent = fs.readFileSync(file.path, 'utf8');
-    if (!fileContent.includes('client') || !fileContent.includes('remote')) {
-      fs.unlinkSync(file.path);
-      return res.status(400).json({ error: 'Invalid .ovpn file format' });
-    }
-    
-    // 安全なファイル名を生成
-    const safeFilename = 'vpn-' + Date.now() + '.conf';
-    const destPath = path.join(vpnDir, safeFilename);
-    
-    // ファイルを移動
-    fs.renameSync(file.path, destPath);
-    
-    // OpenVPNサービスを再起動
-    exec('sudo systemctl restart openvpn@' + safeFilename.replace('.conf', ''), (error, stdout, stderr) => {
-      res.json({
-        success: !error,
-        message: error ? 'VPN connection failed: ' + stderr : 'VPN connected successfully',
-        filename: safeFilename
-      });
-    });
-    
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// 接続チェーンテスト
-app.get('/api/connection/test', (req, res) => {
-  const testCommands = [
-    'curl --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/api/ip',
-    'curl --socks5-hostname 127.0.0.1:9050 https://ipleak.net/json/',
-    'curl --socks5-hostname 127.0.0.1:9050 https://api.duckduckgo.com/?q=ip&format=json'
-  ];
-  
-  let results = [];
-  let completed = 0;
-  
-  testCommands.forEach((cmd, index) => {
-    exec(cmd, { timeout: 10000 }, (error, stdout, stderr) => {
-      results[index] = {
-        command: cmd.split(' ')[0],
-        success: !error,
-        response: error ? stderr : stdout.substring(0, 200) + '...'
-      };
-      completed++;
-      
-      if (completed === testCommands.length) {
-        res.json({
-          timestamp: new Date().toISOString(),
-          tests: results,
-          overallStatus: results.every(r => r.success) ? 'All tests passed' : 'Some tests failed'
-        });
-      }
-    });
-  });
-});
-
-// プロキシチェーン設定
-app.post('/api/proxy/chain', (req, res) => {
-  const { proxyType, proxyHost, proxyPort, proxyUser, proxyPass } = req.body;
-  
-  try {
-    // proxychains設定を更新
-    let config = '# proxychains.conf\n';
-    config += 'strict_chain\n';
-    config += 'proxy_dns\n';
-    config += 'remote_dns_subnet 224\n';
-    config += 'tcp_read_time_out 15000\n';
-    config += 'tcp_connect_time_out 8000\n';
-    config += '[ProxyList]\n';
-    config += 'socks5 127.0.0.1 9050\n'; // Tor
-    
-    if (proxyType && proxyHost && proxyPort) {
-      if (proxyType === 'http') {
-        config += proxyUser && proxyPass ? 
-          `http ${proxyHost} ${proxyPort} ${proxyUser} ${proxyPass}\n` :
-          `http ${proxyHost} ${proxyPort}\n`;
-      } else if (proxyType === 'socks5') {
-        config += proxyUser && proxyPass ? 
-          `socks5 ${proxyHost} ${proxyPort} ${proxyUser} ${proxyPass}\n` :
-          `socks5 ${proxyHost} ${proxyPort}\n`;
-      }
-    }
-    
-    fs.writeFileSync('/etc/proxychains.conf', config);
-    res.json({ success: true, message: 'Proxy chain updated successfully' });
-    
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// シャットダウン
-app.post('/api/system/shutdown', (req, res) => {
-  res.json({ message: 'Shutdown initiated' });
-  setTimeout(() => {
-    exec('sudo shutdown now');
-  }, 1000);
-});
-
-// ランダムなポートで起動（セキュリティ向上）
-const PORT = 8888 + Math.floor(Math.random() * 1000);
-app.listen(PORT, '127.0.0.1', () => {
-  console.log(`Admin panel running on port ${PORT}`);
-});
-
-// 自動シャットダウンタイマー（4時間）
-setTimeout(() => {
-  console.log('Auto-shutdown triggered');
-  exec('sudo shutdown now');
-}, 4 * 60 * 60 * 1000);
-EOF
-        
-        # EJSテンプレート
-        mkdir -p views
-        cat > views/index.ejs <<EOF
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure Connection Manager</title>
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1a1a1a; color: #e0e0e0; margin: 0; padding: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .header { text-align: center; padding: 20px; border-bottom: 1px solid #333; margin-bottom: 30px; }
-        .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 30px; }
-        .card { background: #2d2d2d; border-radius: 10px; padding: 20px; border: 1px solid #444; }
-        .card h3 { color: #4CAF50; margin-top: 0; }
-        .status-indicator { width: 15px; height: 15px; border-radius: 50%; display: inline-block; margin-right: 10px; }
-        .status-running { background: #4CAF50; }
-        .status-warning { background: #FFC107; }
-        .status-error { background: #F44336; }
-        .connection-chain { background: linear-gradient(45deg, #6a11cb 0%, #2575fc 100%); padding: 20px; border-radius: 10px; text-align: center; margin: 20px 0; }
-        .drop-zone { border: 2px dashed #444; border-radius: 8px; padding: 40px; text-align: center; margin: 20px 0; cursor: pointer; transition: all 0.3s; }
-        .drop-zone:hover { border-color: #2575fc; background: #2a2a2a; }
-        .btn { background: #2575fc; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px; transition: all 0.3s; }
-        .btn:hover { background: #6a11cb; }
-        .btn-danger { background: #F44336; }
-        .btn-success { background: #4CAF50; }
-        .test-results { background: #252525; padding: 15px; border-radius: 5px; margin-top: 15px; font-family: monospace; font-size: 14px; overflow-x: auto; }
-        .ip-info { font-size: 24px; font-weight: bold; color: #2575fc; margin: 10px 0; }
-        .security-level { text-align: center; padding: 15px; background: #252525; border-radius: 8px; margin: 15px 0; }
-        .progress-bar { height: 8px; background: #444; border-radius: 4px; margin: 10px 0; overflow: hidden; }
-        .progress { height: 100%; background: linear-gradient(90deg, #4CAF50, #8BC34A); width: 95%; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🔒 Secure Connection Manager</h1>
-            <p>Anonymous browsing with advanced security features</p>
-        </div>
-        
-        <div class="security-level">
-            <h3>🛡️ Security Level: <span style="color: #4CAF50;">MAXIMUM</span></h3>
-            <div class="progress-bar">
-                <div class="progress"></div>
-            </div>
-            <p>End-to-end encryption with multi-layer anonymization</p>
-        </div>
-        
-        <div class="status-grid">
-            <div class="card">
-                <h3><span class="status-indicator status-running"></span> Tor Network</h3>
-                <p>Status: <strong>Connected</strong></p>
-                <p>Circuits: 3 active</p>
-                <p>Bandwidth: 2.5 MB/s</p>
-                <button class="btn" onclick="testTorConnection()">Test Connection</button>
-            </div>
-            
-            <div class="card">
-                <h3><span class="status-indicator status-warning"></span> VPN Connection</h3>
-                <p>Status: <strong>Not Configured</strong></p>
-                <p>Protocol: OpenVPN</p>
-                <div class="drop-zone" id="vpn-drop-zone">
-                    <p>📁 Drop .ovpn file here</p>
-                    <p>or click to upload</p>
-                    <input type="file" id="ovpn-file" accept=".ovpn" style="display: none;">
-                </div>
-                <button class="btn" onclick="viewVpnConfig()">View Configuration</button>
-            </div>
-            
-            <div class="card">
-                <h3><span class="status-indicator status-warning"></span> Proxy Chain</h3>
-                <p>Status: <strong>Not Configured</strong></p>
-                <p>Current Chain: Tor → Internet</p>
-                <button class="btn" onclick="configureProxy()">Configure Proxy</button>
-            </div>
-        </div>
-        
-        <div class="connection-chain">
-            <h2>🔗 Connection Chain</h2>
-            <p id="chain-display">Your IP: <span class="ip-info">Loading...</span></p>
-            <p>Route: <strong>Tor Network → Internet</strong></p>
-            <button class="btn btn-success" onclick="testAllConnections()">Run Full Security Test</button>
-        </div>
-        
-        <div class="card">
-            <h3>🧪 Connection Test Results</h3>
-            <div class="test-results" id="test-results">
-                <p>Run tests to verify your connection security</p>
-            </div>
-            <button class="btn" onclick="clearResults()">Clear Results</button>
-        </div>
-        
-        <div style="text-align: center; margin-top: 30px; padding: 20px; background: #252525; border-radius: 10px;">
-            <h3>⚠️ Security Notice</h3>
-            <p>This session will automatically terminate in 4 hours for security reasons.</p>
-            <button class="btn btn-danger" onclick="shutdownSystem()">Terminate Session Now</button>
-        </div>
-    </div>
-
-    <script>
-        // ドラッグ＆ドロップ機能
-        const dropZone = document.getElementById('vpn-drop-zone');
-        const fileInput = document.getElementById('ovpn-file');
-        
-        dropZone.addEventListener('click', () => fileInput.click());
-        dropZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            dropZone.style.borderColor = '#2575fc';
-            dropZone.style.backgroundColor = '#2a2a2a';
-        });
-        
-        dropZone.addEventListener('dragleave', () => {
-            dropZone.style.borderColor = '#444';
-            dropZone.style.backgroundColor = '';
-        });
-        
-        dropZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            dropZone.style.borderColor = '#444';
-            dropZone.style.backgroundColor = '';
-            
-            if (e.dataTransfer.files.length) {
-                fileInput.files = e.dataTransfer.files;
-                uploadOvpnFile();
-            }
-        });
-        
-        fileInput.addEventListener('change', uploadOvpnFile);
-        
-        function uploadOvpnFile() {
-            if (!fileInput.files.length) return;
-            
-            const file = fileInput.files[0];
-            if (file.name.endsWith('.ovpn')) {
-                const formData = new FormData();
-                formData.append('ovpnFile', file);
-                
-                fetch('/api/vpn/upload', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    alert(data.success ? 'VPN configured successfully!' : 'Error: ' + data.message);
-                    if (data.success) {
-                        document.querySelector('.status-warning').className = 'status-indicator status-running';
-                    }
-                })
-                .catch(error => {
-                    alert('Upload failed: ' + error.message);
-                });
-            } else {
-                alert('Please upload a valid .ovpn file');
-            }
-        }
-        
-        function testTorConnection() {
-            fetch('/api/ip/check')
-                .then(response => response.json())
-                .then(data => {
-                    document.querySelector('.ip-info').textContent = data.ip;
-                    document.getElementById('test-results').innerHTML = 
-                        `<strong>Tor Test Results:</strong><br>
-                        Your IP: ${data.ip}<br>
-                        Status: Connected to Tor network`;
-                })
-                .catch(error => {
-                    document.getElementById('test-results').innerHTML = 
-                        `<strong>Error:</strong> ${error.message}`;
-                });
-        }
-        
-        function testAllConnections() {
-            fetch('/api/connection/test')
-                .then(response => response.json())
-                .then(data => {
-                    let html = `<strong>Security Test Results - ${data.timestamp}</strong><br><br>`;
-                    data.tests.forEach(test => {
-                        html += `<strong>${test.command}:</strong> ${test.success ? '✅ PASSED' : '❌ FAILED'}<br>`;
-                        html += `<small>${test.response}</small><br><br>`;
-                    });
-                    html += `<strong>Overall Status:</strong> ${data.overallStatus}`;
-                    document.getElementById('test-results').innerHTML = html;
-                })
-                .catch(error => {
-                    document.getElementById('test-results').innerHTML = 
-                        `<strong>Error:</strong> ${error.message}`;
-                });
-        }
-        
-        function configureProxy() {
-            const proxyType = prompt('Proxy Type (http/socks5):', 'http');
-            const proxyHost = prompt('Proxy Host:', '127.0.0.1');
-            const proxyPort = prompt('Proxy Port:', '8080');
-            const proxyUser = prompt('Username (optional):', '');
-            const proxyPass = prompt('Password (optional):', '');
-            
-            fetch('/api/proxy/chain', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ proxyType, proxyHost, proxyPort, proxyUser, proxyPass })
-            })
-            .then(response => response.json())
-            .then(data => {
-                alert(data.success ? 'Proxy chain configured successfully!' : 'Error: ' + data.message);
-            });
-        }
-        
-        function shutdownSystem() {
-            if (confirm('Are you sure you want to terminate this session?')) {
-                fetch('/api/system/shutdown', { method: 'POST' })
-                    .then(() => {
-                        alert('Session terminated. You will be disconnected shortly.');
-                        setTimeout(() => window.close(), 3000);
-                    });
-            }
-        }
-        
-        function clearResults() {
-            document.getElementById('test-results').innerHTML = '<p>Run tests to verify your connection security</p>';
-        }
-        
-        function viewVpnConfig() {
-            alert('VPN configuration management interface coming soon!');
-        }
-        
-        // 初期化時にIPを取得
-        window.onload = testTorConnection;
-    </script>
-</body>
-</html>
-EOF
-        
-        # 管理パネルをバックグラウンドで起動
-        pm2 start app.js --no-daemon &
-        
-        # ブラウザ用のシンプルなウェブサーバー
-        cat > ~/browser-server.js <<EOF
-const express = require('express');
-const { exec } = require('child_process');
-const app = express();
-const port = 3000;
-
-app.use(express.static('public'));
-
-app.get('/', (req, res) => {
-  res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Secure Browser</title><style>body{background:#1a1a1a;color:#e0e0e0;font-family:sans-serif;text-align:center;padding:50px;}h1{color:#4CAF50;}</style></head><body><h1>🔒 Secure Browser Session</h1><p>Your anonymous browsing session is active</p><p>Connection: Tor Network → Internet</p><p>Session will expire in 4 hours</p></body></html>');
-});
-
-app.listen(port, '127.0.0.1', () => {
-  console.log('Browser server running on port 3000');
-});
-EOF
-        
-        # 依存関係をインストール
-        mkdir -p ~/browser-app
-        cd ~/browser-app
-        npm init -y
-        npm install express
-        
-        # ブラウザサーバーを起動
-        node ~/browser-server.js &
-        
-        sudo systemctl restart nginx
-        
-        echo "✅ Advanced web interface created"
-
-    - name: "Start Browser Session with Xvfb"
-      run: |
-        echo "🚀 Starting browser session..."
-        
-        # 仮想ディスプレイの設定
-        Xvfb :99 -screen 0 1920x1080x24 &
-        export DISPLAY=:99
-        
-        # Firefoxを高度なセキュリティ設定で起動
-        firefox --profile ~/.mozilla/firefox/anonymous-profile \
-          --no-remote \
-          --new-instance \
-          --kiosk \
-          --private-window \
-          --disable-gpu \
-          --disable-software-rasterizer \
-          --disable-background-networking \
-          --disable-background-timer-throttling \
-          --disable-backgrounding-occluded-windows \
-          --disable-renderer-backgrounding \
-          --disable-infobars \
-          --disable-breakpad \
-          --disable-notifications \
-          --disable-extensions \
-          --disable-sync \
-          --disable-default-apps \
-          --no-default-browser-check \
-          --no-first-run \
-          --no-service-autorun \
-          --password-store=basic \
-          --use-fake-ui-for-media-stream \
-          --use-fake-device-for-media-stream \
-          --disable-ipc-flooding-protection \
-          --disable-background-media \
-          --disable-background-media-renderer \
-          --disable-background-video \
-          https://check.torproject.org &
-        
-        echo "✅ Browser session started in kiosk mode"
-
-    - name: "Monitor and Maintain Connection"
-      run: |
-        echo "🔍 Starting connection monitoring..."
-        
-        # 4時間の監視ループ
-        END_TIME=$(( $(date +%s) + 4 * 60 * 60 ))
-        
-        while [ $(date +%s) -lt $END_TIME ]; do
-          # 接続状態を定期的にチェック
-          CURRENT_IP=$(curl --socks5-hostname 127.0.0.1:9050 --max-time 10 https://api.ipify.org 2>/dev/null || echo "Error")
-          
-          if [ "$CURRENT_IP" != "Error" ]; then
-            echo "✅ $(date) - Connection active. IP: $CURRENT_IP"
-          else
-            echo "⚠️ $(date) - Connection issue detected. Restarting Tor..."
-            sudo systemctl restart tor
-            sleep 10
-          fi
-          
-          # リソース使用状況を監視
-          CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2 + $4}')
-          MEM_USAGE=$(free | grep Mem | awk '{print $3/$2 * 100.0}')
-          
-          echo "📊 Resources - CPU: ${CPU_USAGE}% MEM: ${MEM_USAGE}%"
-          
-          # メモリ使用量が80%を超えた場合に警告
-          if (( $(echo "$MEM_USAGE > 80" | bc -l) )); then
-            echo "MemoryWarning High memory usage detected. Cleaning cache..."
-            sudo sync
-            sudo sysctl -w vm.drop_caches=3
-          fi
-          
-          sleep 60
-        done
-        
-        echo "⏰ Session time limit reached. Initiating shutdown..."
-        
-        # 安全にシャットダウン
-        pkill firefox
-        pkill cloudflared
-        sudo systemctl stop nginx
-        sudo systemctl stop tor
-        sudo shutdown now
-
-    - name: "Final Security Cleanup"
-      if: always()
-      run: |
-        echo "🧹 Performing final security cleanup..."
-        
-        # 機密情報を完全に削除
-        sudo shred -u /tmp/*_pass_*
-        sudo shred -u /etc/nginx/.htpasswd
-        sudo shred -u /etc/nginx/.admin_htpasswd
-        sudo rm -rf /dev/shm/tor-data
-        sudo rm -rf /tmp/cloudflared*
-        sudo rm -rf /tmp/uploads/*
-        
-        # ログをクリア
-        sudo journalctl --vacuum-time=1s
-        sudo logrotate -f /etc/logrotate.conf
-        
-        echo "✅ Security cleanup completed"
-        echo "🔒 All sensitive data has been permanently erased"
-
-permissions:
-  contents: read
-  actions: write
-  checks: write
-  packages: none
-  pages: none
-  id-token: none
-  security-events: none
-  deployments: none
-  pull-requests: none
 
 env:
-  DISPLAY: :99
-  TZ: UTC
-  NODE_OPTIONS: --max-old-space-size=4096
-  NO_COLOR: 1
+  VNC_PASSWD: vncpasswd
+  NGINX_USER: torfirefox
+  FIREFOX_PORT: 5900
+  WEBPORT_NOVNC: 6080
+  WEBPORT_PANEL: 6081
+  TOR_SOCKS_PORT: 9050
+  TOR_CONTROL_PORT: 9051
+  # 匿名性を少し高めるために Tor Control 用パスワードもランダム化
+  TOR_CONTROL_PASSWD_FILE: /tmp/tor-control.passwd
+
+jobs:
+  tor-firefox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # GitHub Actions 上の最大に近い値
+
+    steps:
+      - name: 1) Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            firefox \
+            tor \
+            websockify \
+            novnc \
+            nginx \
+            openssl \
+            netcat-openbsd \
+            x11vnc \
+            xvfb \
+            xdotool
+
+      - name: 2) Generate passwords
+        id: pw
+        run: |
+          # ベーシック認証用パスワード（32文字）
+          BASIC_PW=$(openssl rand -base32 32 | head -c 32)
+          echo "BASIC_PW=${BASIC_PW}" >> $GITHUB_OUTPUT
+
+          # Tor Control パスワード（16文字）
+          TOR_PW=$(openssl rand -base32 16 | head -c 16)
+          echo "TOR_CONTROL_PW=${TOR_PW}" >> $GITHUB_OUTPUT
+
+          # Tor Control 用のハッシュ化パスワード生成（tor --hash-password）
+          TOR_HASHED=$(tor --hash-password "${TOR_PW}" | head -n 1)
+          echo "${TOR_PW}" > "${{ env.TOR_CONTROL_PASSWD_FILE }}"
+          echo "TOR_CONTROL_HASHED=${TOR_HASHED}" >> $GITHUB_OUTPUT
+
+          echo "============================================================"
+          echo "Generated BASIC_PW:   ${BASIC_PW}"
+          echo "Generated TOR_CONTROL_PW (raw): ${TOR_PW}"
+          echo "Generated TOR_CONTROL_HASHED:   ${TOR_HASHED}"
+          echo "============================================================"
+
+      - name: 3) Prepare X11 virtual display
+        run: |
+          # Xvfb を仮想ディスプレイ :99 で起動
+          Xvfb :99 -screen 0 1280x720x24 > /tmp/xvfb.log 2>&1 &
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+
+      - name: 4) Configure Firefox profile (proxy & fingerprint protections)
+        run: |
+          # Firefox プロファイル作成
+          mkdir -p ~/.mozilla/firefox/torfirefox
+          PROFILE_INI=~/.mozilla/firefox/profiles.ini
+          echo "[Profile0]" > "${PROFILE_INI}"
+          echo "Name=torfirefox" >> "${PROFILE_INI}"
+          echo "IsRelative=1" >> "${PROFILE_INI}"
+          echo "Path=torfirefox" >> "${PROFILE_INI}"
+          echo "Default=1" >> "${PROFILE_INI}"
+
+          PROFILE_DIR=~/.mozilla/firefox/torfirefox
+          # ユーザ設定を上書きする user.js
+          cat > "${PROFILE_DIR}/user.js" << 'EOF'
+          // Tor SOCKS5 プロキシ設定
+          user_pref("network.proxy.type", 1);
+          user_pref("network.proxy.socks", "127.0.0.1");
+          user_pref("network.proxy.socks_port", 9050);
+          user_pref("network.proxy.socks_version", 5);
+          user_pref("network.proxy.socks_remote_dns", true);
+          user_pref("network.proxy.no_proxies_on", "");
+
+          // DNS over HTTPS を無効化して Tor 経由 DNS を優先
+          user_pref("network.trr.mode", 5);
+
+          // Firefox 指紋対策（RFP）【turn2search15】【turn0search16】
+          user_pref("privacy.resistFingerprinting", true);
+          user_pref("privacy.window.maxInnerWidth", 1366);
+          user_pref("privacy.window.maxInnerHeight", 768);
+
+          // OS 偽装（Windows っぽく）
+          user_pref("general.useragent.override", "Mozilla/5.0 (Windows NT 10.0; rv:115.0) Gecko/20100101 Firefox/115.0");
+          user_pref("general.platform.override", "Win32");
+          user_pref("general.oscpu.override", "Windows NT 10.0; Win64; x64");
+
+          // その他トラッキング軽減
+          user_pref("privacy.trackingprotection.enabled", true);
+          user_pref("privacy.trackingprotection.pbmode.enabled", true);
+
+          // セッションと履歴
+          user_pref("browser.sessionstore.resume_from_crash", false);
+          user_pref("browser.startup.page", 0);
+
+          // 不要な機能の無効化
+          user_pref("media.peerconnection.enabled", false);
+          user_pref("dom.webnotifications.enabled", false);
+          user_pref("browser.cache.disk.enable", false);
+          user_pref("browser.cache.memory.enable", true);
+          EOF
+
+      - name: 5) Configure Tor (SOCKS + Control)
+        run: |
+          TORRC=/etc/tor/torrc
+          sudo cp "${TORRC}" "${TORRC}.bak"
+
+          # SOCKS + Control Port + Control 認証
+          sudo bash -c 'cat > "${TORRC}" << EOF
+          SOCKSPort ${{ env.TOR_SOCKS_PORT }} IsolateDestAddr
+          ControlPort ${{ env.TOR_CONTROL_PORT }}
+          HashedControlPassword ${{ steps.pw.outputs.TOR_CONTROL_HASHED }}
+          DataDirectory /var/lib/tor
+          Log notice file /var/log/tor/log
+          EOF
+          '
+
+          # ディレクトリ作成＆権限設定
+          sudo mkdir -p /var/lib/tor /var/log/tor
+          sudo chown -R debian-tor:debian-tor /var/lib/tor /var/log/tor
+
+          # Tor サービス再起動
+          sudo systemctl restart tor
+
+          # Tor 起動待ち
+          for i in {1..30}; do
+            if nc -z 127.0.0.1 ${{ env.TOR_SOCKS_PORT }} 2>/dev/null; then
+              echo "Tor SOCKS port is ready."
+              break
+            fi
+            echo "Waiting for Tor SOCKS port ($i/30)..."
+            sleep 2
+          done
+
+          # ログ出力
+          sudo tail -n 30 /var/log/tor/log
+
+      - name: 6) Start Firefox with Tor profile
+        run: |
+          # 仮想ディスプレイとプロファイルを指定して Firefox 起動
+          firefox --profile ~/.mozilla/firefox/torfirefox \
+            --display=:99 \
+            > /tmp/firefox.log 2>&1 &
+
+          # Firefox 起動待ち（ポートを直接見られないので、プロセスとプロファイルフォルダを監視）
+          for i in {1..30}; do
+            if pgrep -x firefox > /dev/null && [ -d ~/.mozilla/firefox/torfirefox ]; then
+              echo "Firefox seems to be up."
+              break
+            fi
+            echo "Waiting for Firefox ($i/30)..."
+            sleep 2
+          done
+
+          # ログ
+          cat /tmp/firefox.log
+
+      - name: 7) Start x11vnc and websockify (noVNC)
+        run: |
+          # VNC パスワード設定
+          x11vnc -storepasswd "${{ env.VNC_PASSWD }}" ~/.vnc/passwd
+
+          # x11vnc 起動（:99 ディスプレイをポート ${{ env.FIREFOX_PORT }} で公開）
+          x11vnc -display :99 -rfbport ${{ env.FIREFOX_PORT }} \
+            -rfbauth ~/.vnc/passwd -forever -shared -nopw \
+            > /tmp/x11vnc.log 2>&1 &
+
+          # websockify 起動（noVNC から VNC へのブリッジ）
+          websockify --web=/usr/share/novnc ${{ env.WEBPORT_NOVNC }} \
+            127.0.0.1:${{ env.FIREFOX_PORT }} \
+            > /tmp/websockify.log 2>&1 &
+
+          echo "VNC and noVNC started."
+
+      - name: 8) Setup Tor panel (simple HTTP server with auth)
+        run: |
+          PANEL_DIR=/tmp/tor-panel
+          mkdir -p "${PANEL_DIR}"
+
+          # パスワードとTor制御コマンドを実行する簡易 CGI
+          cat > "${PANEL_DIR}/index.cgi" << 'CGI_EOF'
+          #!/bin/bash
+          echo "Content-Type: text/html; charset=utf-8"
+          echo ""
+
+          # Basic Auth は nginx 側でやる想定だが、念のため TOR_CONTROL_PW のチェックを入れる例
+          export TOR_CONTROL_PASSWD_FILE=/tmp/tor-control.passwd
+          TOR_CONTROL_PW=$(cat "${TOR_CONTROL_PASSWD_FILE}" 2>/dev/null)
+
+          echo "<!doctype html>"
+          echo "<html><head><title>Tor Panel</title></head><body>"
+          echo "<h1>Tor 管理パネル</h1>"
+
+          if [ -z "${TOR_CONTROL_PW}" ]; then
+            echo "<p style='color:red'>Tor control password not found on server.</p>"
+          else
+            echo "<p>Tor Control password is set (not shown for safety).</p>"
+          fi
+
+          echo "<h2>Actions</h2>"
+
+          # NEWNYM（回線切り替え）リクエストの処理
+          QUERY_STRING="${QUERY_STRING:-}"
+          if echo "${QUERY_STRING}" | grep -q 'action=newnym'; then
+            if [ -n "${TOR_CONTROL_PW}" ]; then
+              (
+                sleep 0.2
+                echo -e "AUTHENTICATE \"${TOR_CONTROL_PW}\"\r"
+                sleep 0.2
+                echo -e "SIGNAL NEWNYM\r"
+                sleep 0.2
+                echo -e "QUIT\r"
+              ) | nc 127.0.0.1 9051 > /tmp/tor-newnym.log 2>&1
+
+              echo "<p>NEWNYM を要求しました。結果:</p>"
+              echo "<pre>"
+              cat /tmp/tor-newnym.log
+              echo "</pre>"
+            else
+              echo "<p style='color:red'>NEWNYM 失敗: Tor control password なし。</p>"
+            fi
+          fi
+
+          echo "<ul>"
+          echo "<li><a href=\"./index.cgi?action=newnym\">NEWNYM: 回線（サーキット）を切り替え</a></li>"
+          echo "</ul>"
+
+          echo "<h2>Tor ログ（最新30行）</h2>"
+          echo "<pre>"
+          sudo tail -n 30 /var/log/tor/log 2>/dev/null || echo "Log not available."
+          echo "</pre>"
+
+          echo "</body></html>"
+          CGI_EOF
+
+          chmod +x "${PANEL_DIR}/index.cgi"
+
+          echo "Tor panel prepared at ${PANEL_DIR}"
+
+      - name: 9) Configure nginx (Basic auth + reverse proxies)
+        run: |
+          # htpasswd 生成（apache2-utils が足りない場合は openssl でベタ生成）
+          # ここでは openssl を使って簡易的に生成する例
+          HTPASSWD_FILE=/etc/nginx/.htpasswd
+          BASIC_PW="${{ steps.pw.outputs.BASIC_PW }}"
+          # user:${openssl-md5-hash} 形式（簡易）
+          # 本来は htpasswd -nb ユーザ パスワード 推奨だが、依増を減らすために自前生成
+          HTPASSWD_ENTRY="${{ env.NGINX_USER }}:$(openssl passwd -apr1 "${BASIC_PW}")"
+          echo "${HTPASSWD_ENTRY}" | sudo tee "${HTPASSWD_FILE}" > /dev/null
+
+          # nginx 設定
+          sudo bash -c 'cat > /etc/nginx/sites-available/default << EOF
+          server {
+              listen 80;
+              server_name _;
+
+              auth_basic "Tor Firefox Realm";
+              auth_basic_user_file /etc/nginx/.htpasswd;
+
+              # noVNC
+              location / {
+                  proxy_pass http://127.0.0.1:${{ env.WEBPORT_NOVNC }}/;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade \$http_upgrade;
+                  proxy_set_header Connection "upgrade";
+                  proxy_set_header Host \$host;
+              }
+
+              # Tor 管理パネル（CGI）
+              location /tor-panel {
+                  alias /tmp/tor-panel;
+                  gzip off;
+                  index index.cgi;
+
+                  location ~ \.cgi$ {
+                      include /etc/nginx/fastcgi_params;
+                      fastcgi_pass unix:/var/run/fcgiwrap.socket;
+                      fastcgi_param SCRIPT_FILENAME /tmp/tor-panel\$fastcgi_script_name;
+                  }
+              }
+          }
+          EOF
+          '
+
+          # fcgiwrap のインストール（CGI 実行用）
+          sudo apt-get install -y fcgiwrap
+
+          # 構文チェック＆再起動
+          sudo nginx -t
+          sudo systemctl restart nginx
+
+      - name: 10) Start cloudflared (Quick Tunnel, no account)【turn0search10】【turn0search11】
+        id: tunnel
+        run: |
+          # cloudflared のバイナリ取得
+          curl -L -o cloudflared.deb "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb"
+          sudo dpkg -i cloudflared.deb || sudo apt-get -f install -y
+
+          # Quick Tunnel（バックグラウンド実行）
+          cloudflared tunnel --url http://127.0.0.1:80 \
+            > /tmp/cloudflared.log 2>&1 &
+
+          # URL 取得待ち（ログに https://〜.trycloudflare.com が出る）
+          for i in {1..60}; do
+            if grep -q "https://.*trycloudflare.com" /tmp/cloudflared.log; then
+              TUNNEL_URL=$(grep -oP "https://[0-9a-zA-Z\-]+\.trycloudflare\.com" /tmp/cloudflared.log | head -n 1)
+              if [ -n "${TUNNEL_URL}" ]; then
+                echo "TUNNEL_URL=${TUNNEL_URL}" >> $GITHUB_OUTPUT
+                echo "============================================================"
+                echo "Cloudflare Tunnel URL: ${TUNNEL_URL}"
+                echo "Basic auth user:       ${{ env.NGINX_USER }}"
+                echo "Basic auth password:   ${{ steps.pw.outputs.BASIC_PW }}"
+                echo "============================================================"
+                break
+              fi
+            fi
+            echo "Waiting for cloudflared tunnel URL ($i/60)..."
+            sleep 2
+          done
+
+          # cloudflared ログ出力
+          cat /tmp/cloudflared.log
+
+      - name: 11) Keep alive and health check (Firefox + Tor)
+        run: |
+          # Firefox と Tor が生きているか監視しつつ、Action を落とさない
+          END_TIME=$(($(date +%s) + 35000))  # 約 9.7 時間後（6時間制限ギリギリ前）
+          echo "Will keep running until $(date -d @${END_TIME})."
+
+          while [ "$(date +%s)" -lt "${END_TIME}" ]; do
+            # Firefox プロセス監視
+            if ! pgrep -x firefox > /dev/null; then
+              echo "Firefox not running. Restarting..."
+              firefox --profile ~/.mozilla/firefox/torfirefox \
+                --display=:99 \
+                > /tmp/firefox.log 2>&1 &
+              sleep 5
+            fi
+
+            # Tor プロセス監視
+            if ! pgrep -x tor > /dev/null; then
+              echo "Tor not running. Trying to restart..."
+              sudo systemctl restart tor
+              sleep 5
+            fi
+
+            # SOCKS ポート疎通確認
+            if ! nc -z 127.0.0.1 ${{ env.TOR_SOCKS_PORT }} 2>/dev/null; then
+              echo "Tor SOCKS port not reachable. Check Tor logs:"
+              sudo tail -n 20 /var/log/tor/log || true
+            fi
+
+            # 1分ごとに軽いログ出力（Action が kill されないように）
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - Firefox/Tor/cloudflared/nginx are running."
+
+            sleep 60
+          done
+
+          echo "Reached max runtime limit. Exiting gracefully."
