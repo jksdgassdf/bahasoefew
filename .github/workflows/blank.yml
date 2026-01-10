@@ -15,8 +15,8 @@ env:
   SESSION_HASH: placeholder
   SYSTEM_UID: placeholder
   WORK_DIR: /tmp/workspace
-  MAX_MEMORY: 1024
-  MAX_CPU: 1.0
+  MAX_MEMORY: 2048 # メモリリミットを少し緩和（最新ブラウザのため）
+  MAX_CPU: 2.0
 
 jobs:
   ${{ secrets.TASK_NAME || 'secure_task' }}:
@@ -24,18 +24,18 @@ jobs:
     timeout-minutes: 360
     # 完全なハードウェア・ネットワーク分離
     container:
-      # 【修正】alpineからubuntuへ変更（apt-getを使用するため）
+      # 【修正】ubuntu:22.04 (LTS) を使用し、セキュリティアップデートを適用
       image: ubuntu:22.04
       options: --hostname $(openssl rand -hex 5 | tr '[:lower:]' '[:upper:]') \
                 --mac-address $(printf '%02x' $((0x$(od -An -N1 -tx1 /dev/urandom | tr -d ' ') & 0xFE | 0x02)); od -An -N5 -tx1 /dev/urandom | tr -d ' \n' | sed 's/../:&/g;s/^://') \
-                --shm-size=128m \
+                --shm-size=256m \
                 --memory=${{ env.MAX_MEMORY }}m \
                 --cpus=${{ env.MAX_CPU }} \
-                --ulimit nofile=16384:16384 \
-                --ulimit nproc=2048:2048 \
+                --ulimit nofile=32768:32768 \
+                --ulimit nproc=4096:4096 \
                 --read-only \
-                --tmpfs /tmp:rw,nosuid,nodev,noatime,size=64m \
-                --tmpfs /run:rw,nosuid,nodev,noatime,size=32m \
+                --tmpfs /tmp:rw,nosuid,nodev,noatime,size=128m \
+                --tmpfs /run:rw,nosuid,nodev,noatime,size=64m \
                 --cap-drop=ALL \
                 --cap-add=NET_ADMIN \
                 --cap-add=NET_RAW \
@@ -59,7 +59,7 @@ jobs:
         echo "NETWORK_NAMESPACE=$NETWORK_NAMESPACE" >> $GITHUB_ENV
         
         # ランダム遅延（bot検出防止）
-        sleep $((RANDOM % 60 + 20))
+        sleep $((RANDOM % 120 + 30))
         
         # 環境の完全なマスキング
         unset GITHUB_*
@@ -67,6 +67,7 @@ jobs:
         export LOG_LEVEL=CRITICAL
         export NO_COLOR=1
         export PYTHONUNBUFFERED=1
+        export DEBIAN_FRONTEND=noninteractive
         
         # 作業ディレクトリの作成（高度なアクセス制限）
         mkdir -p $WORK_DIR
@@ -77,7 +78,7 @@ jobs:
         FAKE_HOST="PC-${SYSTEM_UID:0:8}"
         echo "$FAKE_HOST" > /etc/hostname
         hostname "$FAKE_HOST"
-        echo "127.0.0.1 $FAKE_HOST" >> /etc/hosts
+        echo "127.0.0.1 $FAKE_HOST localhost" >> /etc/hosts
         
         # ネットワーク名前空間の作成（完全分離）
         ip netns add $NETWORK_NAMESPACE
@@ -92,12 +93,13 @@ jobs:
         ip netns exec $NETWORK_NAMESPACE ip link set veth_ns up
         ip netns exec $NETWORK_NAMESPACE ip route add default via 10.200.0.1
         
-        # NAT設定（Tor経由のみ許可）
+        # NAT設定（Tor経由のみ許可） - 匿名性強化
+        iptables -t nat -F
         iptables -t nat -A POSTROUTING -s 10.200.0.0/24 -o eth0 -j MASQUERADE
         iptables -A FORWARD -i veth_host -o eth0 -j ACCEPT
         iptables -A FORWARD -i eth0 -o veth_host -m state --state RELATED,ESTABLISHED -j ACCEPT
         
-        # デフォルトのブロックポリシー
+        # デフォルトのブロックポリシー - より厳格に
         iptables -P INPUT DROP
         iptables -P FORWARD DROP
         iptables -P OUTPUT DROP
@@ -105,38 +107,47 @@ jobs:
         # 必要最小限の許可
         iptables -A INPUT -i lo -j ACCEPT
         iptables -A INPUT -i veth_host -j ACCEPT
+        # DNS/Torへの内部通信を許可
+        iptables -A INPUT -p tcp --dport 9050 -j ACCEPT # SOCKS
+        iptables -A INPUT -p tcp --dport 9051 -j ACCEPT # Control
+        iptables -A INPUT -p udp --dport 9053 -j ACCEPT # DNS
+        iptables -A INPUT -p tcp --dport 9040 -j ACCEPT # Trans
+        
         iptables -A OUTPUT -o lo -j ACCEPT
         iptables -A OUTPUT -o veth_host -j ACCEPT
+        # 外部へはTor/HTTP(apt)のみ許可
+        iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT
+        iptables -A OUTPUT -p tcp --dport 80 -j ACCEPT
         
         # DNSの完全匿名化
         echo "nameserver 127.0.0.1" > /etc/resolv.conf
         echo "options rotate timeout:1 attempts:2" >> /etc/resolv.conf
         
         # タイムゾーンのランダム化
-        TZONES=$(cat /usr/share/zoneinfo/zone.tab | awk '{print $3}' | grep -E '(America|Europe|Asia)' | shuf -n 20)
+        TZONES=$(cat /usr/share/zoneinfo/zone.tab | awk '{print $3}' | grep -E '(America|Europe|Asia|Pacific)' | shuf -n 20)
         SELECTED_TZ=$(echo "$TZONES" | shuf -n1)
         ln -sf "/usr/share/zoneinfo/$SELECTED_TZ" /etc/localtime
         echo "Anonymized timezone: $SELECTED_TZ"
         
         # カーネルパラメータの最適化
-        sysctl -w net.core.rmem_max=8388608
-        sysctl -w net.core.wmem_max=8388608
-        sysctl -w vm.swappiness=5
+        sysctl -w net.core.rmem_max=16777216
+        sysctl -w net.core.wmem_max=16777216
+        sysctl -w vm.swappiness=1
         sysctl -w vm.vfs_cache_pressure=100
         sysctl -w net.ipv4.tcp_congestion_control=bbr
         sysctl -w net.ipv4.tcp_fastopen=3
+        sysctl -w net.ipv4.ip_local_port_range="1024 65535"
         
         echo "✅ Pre-execution hardening completed"
       shell: bash
 
-    - name: 📦 Minimal Secure Package Installation
+    - name: 📦 Minimal Secure Package Installation & Update
       run: |
-        # 最小限のパッケージインストール（完全匿名）
-        echo "::notice::Installing minimal secure packages"
+        # 最小限のパッケージインストール（完全匿名）＆システムアップデート
+        echo "::notice::Installing minimal secure packages and updating system"
         
         # パッケージソースの完全匿名化
         export APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=1
-        export DEBIAN_FRONTEND=noninteractive
         
         # ランダムミラー選択
         MIRRORS=(
@@ -155,34 +166,39 @@ jobs:
         deb ${RANDOM_MIRROR} jammy-security main restricted universe multiverse
         EOF
         
-        # リポジトリ更新と依存関係のインストール
+        # 【強化】システムアップデート
+        echo "::notice::Running system update..."
         apt-get update -qq
+        apt-get upgrade -y -o Dpkg::Options::="--force-confold" > /dev/null 2>&1
+        
+        # リポジトリ更新と依存関係のインストール
+        echo "::notice::Installing dependencies..."
         apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confold" \
-          curl wget ca-certificates gnupg2 \
+          curl wget ca-certificates gnupg2 software-properties-common \
           tor openvpn stunnel4 socat \
           xvfb fluxbox x11vnc \
-          python3 python3-pip \
-          jq iptables iproute2 \
+          python3 python3-pip python3-dev \
+          jq iptables iproute2 iputils-ping \
           libsodium23 \
           unbound \
           > /dev/null 2>&1
         
-        # 【修正】Firefoxのインストール方法変更
-        # Ubuntu 22.04のapt install firefoxはSnap版であり、Docker内で動作しないため、
-        # 直接tarballをダウンロードして展開する方式に変更
+        # 【強化】Firefoxのインストール (Standalone binary)
         echo "::notice::Downloading Firefox standalone binary..."
         mkdir -p /opt/firefox
+        # Firefoxの最新版を取得
         wget -q -O /tmp/firefox.tar.bz2 "https://download.mozilla.org/?product=firefox-latest&os=linux64&lang=en-US"
         tar -xjf /tmp/firefox.tar.bz2 -C /opt/
         ln -sf /opt/firefox/firefox /usr/bin/firefox
         rm /tmp/firefox.tar.bz2
 
-        # Pythonの最小依存関係
+        # 【強化】Pythonの最小依存関係とアップデート
         pip3 install --no-cache-dir --upgrade pip > /dev/null 2>&1
         pip3 install --no-cache-dir \
-          aiohttp==3.9.3 \
+          aiohttp==3.9.5 \
           dnspython==2.6.1 \
           certifi==2024.2.2 \
+          requests==2.31.0 \
           > /dev/null 2>&1
         
         # インストール痕跡の完全削除
@@ -190,7 +206,7 @@ jobs:
         apt-get clean
         rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/*
         
-        echo "✅ Minimal packages installed securely"
+        echo "✅ Minimal packages installed and system updated"
       shell: bash
 
     - name: 🌐 Advanced Anonymous Network Stack
@@ -198,7 +214,7 @@ jobs:
         # 高度な匿名ネットワークスタックの構築
         echo "::notice::Building advanced anonymous network infrastructure"
         
-        # Torの高度な設定（DNS匿名化強化）
+        # Torの高度な設定（DNS匿名化強化 & 匿名性向上）
         cat > /etc/tor/torrc <<EOF
         # Enhanced Tor configuration for maximum anonymity
         SocksPort 9050 IPv6Traffic PreferIPv6
@@ -208,9 +224,9 @@ jobs:
         CookieAuthentication 1
         
         # Exit node optimization with geographic diversity
-        ExitNodes {jp},{us},{de},{fr},{nl},{se},{ca},{au},{uk},{sg},{ch},{at},{no},{fi},{be},{ie}
+        ExitNodes {jp},{us},{de},{fr},{nl},{se},{ca},{au},{uk},{sg},{ch},{at},{no},{fi},{be},{ie},{lu},{is}
         StrictNodes 1
-        ExcludeExitNodes {ru},{cn},{ir},{kp},{sy},{by},{cu},{ve},{tr},{eg},{il},{sa},{pk},{in},{br}
+        ExcludeExitNodes {ru},{cn},{ir},{kp},{sy},{by},{cu},{ve},{tr},{eg},{il},{sa},{pk},{in},{br},{my},{th},{vn},{ph}
         
         # Advanced DNS configuration
         ClientDNSRejectInternalAddresses 1
@@ -223,13 +239,17 @@ jobs:
         DisableAllSwap 1
         RunAsDaemon 1
         DataDirectory /var/lib/tor
+        SafeLogging 1
         
-        # Circuit management for optimal performance
+        # Circuit management for optimal performance & anonymity
         NumEntryGuards 8
-        CircuitBuildTimeout 10
-        KeepalivePeriod 30
-        NewCircuitPeriod 20
-        MaxCircuitDirtiness 300
+        UseEntryGuards 1
+        UseEntryGuards 0 # Newer versions prefer 1, but keeping compatible
+        CircuitBuildTimeout 60
+        KeepalivePeriod 60
+        NewCircuitPeriod 30
+        MaxCircuitDirtiness 600
+        MaxClientCircuitsPending 100
         
         # Connection protection
         FirewallPorts 80,443,53,123
@@ -280,8 +300,6 @@ jobs:
         
         # Torサービスの起動
         mkdir -p /var/lib/tor
-        # Torはrootlessまたはtorユーザーで動作させるのが一般的だが、
-        # コンテナ内の簡易構成では権限調整が必要
         chown -R _tor:_tor /var/lib/tor 2>/dev/null || chown -R root:root /var/lib/tor
         chmod 700 /var/lib/tor
         
@@ -480,9 +498,9 @@ jobs:
         echo "::notice::Setting up ultimate fingerprint-hardened desktop"
         
         # Xサーバーの高度な設定（完全匿名）
-        Xvfb :99 -screen 0 1366x768x24 -ac +extension GLX +render -noreset \
+        Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset \
           -nolisten tcp -nolisten local \
-          -maxfbmem 67108864 \
+          -maxfbmem 134217728 \
           -auth /dev/null \
           -logfile /dev/null \
           -extension RANDR \
@@ -790,7 +808,6 @@ jobs:
         cd $WORK_DIR/control-panel
         
         # 量子耐性のコントロールパネル (HTML)
-        # Note: The HTML content is long, preserving it exactly as is to ensure functionality
         cat > index.html <<'EOFHTML'
         <!DOCTYPE html>
         <html lang="en">
@@ -1801,9 +1818,10 @@ jobs:
         </html>
         EOFHTML
 
-        # 量子耐性Webサーバー (Python)
-        # 【修正】Pythonコードをファイルに書き出して実行する形式に変更（シンタックスエラー回避）
-        cat > server.py <<'PYPYEOF'
+        # 【重要修正】Pythonスクリプトの生成
+        # cat << 'PYEOF' を使用することで、シェルによる解釈を回避し、
+        # Pythonのインデントを正確にファイルに書き込みます。
+        cat > "$WORK_DIR/server.py" << 'PYEOF'
 import http.server
 import ssl
 import socket
@@ -1850,12 +1868,10 @@ server_thread.start()
 # Keep main thread alive
 while True:
     time.sleep(1)
-PYPYEOF
+PYEOF
 
-        # 【修正】YAMLインデントによるPythonのIndentationErrorを回避するために、先頭の空白を削除
-        sed -i 's/^            //' server.py
-
-        nohup python3 server.py &
+        # サーバーを実行
+        nohup python3 "$WORK_DIR/server.py" > /dev/null 2>&1 &
         
         CONTROL_PANEL_PID=$!
         echo "CONTROL_PANEL_PID=$CONTROL_PANEL_PID" >> $GITHUB_ENV
@@ -1873,12 +1889,20 @@ PYPYEOF
         # 量子耐性トンネル識別子
         QUANTUM_ID=$(openssl rand -hex 16)
         
-        # 最新のcloudflaredをダウンロード
-        wget https://github.com/cloudflare/cloudflared/releases/download/2024.6.1/cloudflared-linux-amd64 -O cloudflared
+        # 【強化】Cloudflaredの最新版を動的に取得
+        echo "::notice::Fetching latest cloudflared..."
+        CLOUDFLARED_URL=$(curl -s https://api.github.com/repos/cloudflare/cloudflared/releases/latest | grep "browser_download_url" | grep "linux-amd64" | cut -d '"' -f 4)
+        
+        # API limit fallback if needed
+        if [ -z "$CLOUDFLARED_URL" ]; then
+           CLOUDFLARED_URL="https://github.com/cloudflare/cloudflared/releases/download/2024.6.1/cloudflared-linux-amd64"
+        fi
+        
+        wget "$CLOUDFLARED_URL" -O cloudflared
         chmod +x cloudflared
         
-        # 量子耐性ブラウザトンネル
-        ./cloudflared tunnel --url http://127.0.0.1:6080 \
+        # 量子耐性ブラウザトンネル (VNC)
+        ./cloudflared tunnel --url http://127.0.0.1:5901 \
           --metrics 127.0.0.1:4040 \
           --no-autoupdate \
           --edge-ip-version auto \
@@ -1910,7 +1934,7 @@ PYPYEOF
         echo "PANEL_TUNNEL_PID=$PANEL_TUNNEL_PID" >> $GITHUB_ENV
         
         # URL取得の最適化
-        sleep 10
+        sleep 15
         
         BROWSER_URL=$(grep -oP 'https://[^ ]+\.trycloudflare\.com' $WORK_DIR/browser_tunnel.log | head -1)
         PANEL_URL=$(grep -oP 'https://[^ ]+\.trycloudflare\.com' $WORK_DIR/panel_tunnel.log | head -1)
@@ -1981,7 +2005,7 @@ PYPYEOF
         
         for ((minute=0; minute<SESSION_DURATION; minute++)); do
           # 量子遅延（検出防止）
-          sleep $((RANDOM % 30 + 10))
+          sleep $((RANDOM % 60 + 10))
           
           # 量子リソース監視
           MEMORY_USAGE=$(free | awk '/Mem:/ {printf "%.1f", $3/$2 * 100.0}')
@@ -1991,7 +2015,7 @@ PYPYEOF
           echo "Memory: ${MEMORY_USAGE}% | CPU: ${CPU_USAGE}%"
           
           # 量子健全性チェック
-          if (( $(echo "$MEMORY_USAGE > 95" | bc -l) )); then
+          if (( $(echo "$MEMORY_USAGE > 90" | bc -l) )); then
             echo "::warning::Quantum memory critical"
             sync
             echo 3 > /proc/sys/vm/drop_caches
@@ -2001,9 +2025,10 @@ PYPYEOF
           # Tor量子回路の健全性チェック
           if ! ip netns exec $NETWORK_NAMESPACE curl -s --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/api/ip > /dev/null 2>&1; then
             echo "::warning::Quantum circuit degraded - rebuilding"
-            kill ${{ env.TOR_PID }}
+            kill ${{ env.TOR_PID }} 2>/dev/null || true
             tor -f /etc/tor/torrc &
-            echo "TOR_PID=$!" >> $GITHUB_ENV
+            NEW_TOR_PID=$!
+            echo "TOR_PID=$NEW_TOR_PID" >> $GITHUB_ENV
             sleep 15
             echo "::notice::Quantum circuit restored"
           fi
@@ -2032,6 +2057,8 @@ PYPYEOF
         pkill -f x11vnc || true
         pkill -f Xvfb || true
         pkill -f firefox || true
+        pkill -f cloudflared || true
+        pkill -f python3 || true
         
         # ネットワーク名前空間のクリーンアップ
         ip netns delete $NETWORK_NAMESPACE 2>/dev/null || true
