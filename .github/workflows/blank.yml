@@ -3,14 +3,14 @@ name: ${{ secrets.WF_ID || 'system_core' }}
 # GitHubからの完全な検出回避 - ランダム化された実行パターン
 on:
   schedule:
-    # 【修正1】外側のクォートをダブルクォートにしてYAMLエラーを解消
+    # 【修正】外側のクォートをダブルクォートにしてYAMLエラーを解消
     - cron: "${{ secrets.EXEC_TIME || '17,49 2-5,13-17 * * 0,2,4' }}"
   workflow_dispatch: {}
 
 # 最小権限原則 - GitHub APIアクセスを完全にブロック
 permissions: {}
 env:
-  # 【修正2】ここではシェルコマンドが展開されないため、ランダム値生成は後続のステップで行います。
+  # 【修正】ここではシェルコマンドが展開されないため、ランダム値生成は後続のステップで行います。
   # プレースホルダーとして定義（実際にはステップ1で上書きされます）
   SESSION_HASH: placeholder
   SYSTEM_UID: placeholder
@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 360
     # 完全なハードウェア・ネットワーク分離
     container:
-      # 【修正3】alpineからubuntuへ変更（apt-getを使用するため）
+      # 【修正】alpineからubuntuへ変更（apt-getを使用するため）
       image: ubuntu:22.04
       options: --hostname $(openssl rand -hex 5 | tr '[:lower:]' '[:upper:]') \
                 --mac-address $(printf '%02x' $((0x$(od -An -N1 -tx1 /dev/urandom | tr -d ' ') & 0xFE | 0x02)); od -An -N5 -tx1 /dev/urandom | tr -d ' \n' | sed 's/../:&/g;s/^://') \
@@ -49,7 +49,7 @@ jobs:
         # 完全なシステムの匿名化とセキュリティ強化
         echo "::notice::Initiating pre-execution security protocol"
         
-        # 【修正4】変数の動的生成をこのステップ内で行い、GITHUB_ENVに設定
+        # 【修正】変数の動的生成をこのステップ内で行い、GITHUB_ENVに設定
         export SYSTEM_UID=$(head /dev/urandom | tr -dc A-HJ-NP-Za-km-z2-9 | head -c 24)
         export WORK_DIR="/tmp/.$SYSTEM_UID"
         export NETWORK_NAMESPACE="anon_ns_$SYSTEM_UID"
@@ -167,7 +167,7 @@ jobs:
           unbound \
           > /dev/null 2>&1
         
-        # 【修正5】Firefoxのインストール方法変更
+        # 【修正】Firefoxのインストール方法変更
         # Ubuntu 22.04のapt install firefoxはSnap版であり、Docker内で動作しないため、
         # 直接tarballをダウンロードして展開する方式に変更
         echo "::notice::Downloading Firefox standalone binary..."
@@ -789,8 +789,9 @@ jobs:
         mkdir -p $WORK_DIR/control-panel
         cd $WORK_DIR/control-panel
         
-        # 量子耐性のコントロールパネル
-        cat > index.html <<'EOF'
+        # 量子耐性のコントロールパネル (HTML)
+        # Note: The HTML content is long, preserving it exactly as is to ensure functionality
+        cat > index.html <<'EOFHTML'
         <!DOCTYPE html>
         <html lang="en">
         <head>
@@ -1798,10 +1799,11 @@ jobs:
             </script>
         </body>
         </html>
-        EOF
-        
-        # 量子耐性Webサーバー
-        nohup python3 -c '
+        EOFHTML
+
+        # 量子耐性Webサーバー (Python)
+        # 【修正】Pythonコードをファイルに書き出して実行する形式に変更（シンタックスエラー回避）
+        cat > server.py <<'PYPYEOF'
 import http.server
 import ssl
 import socket
@@ -1820,7 +1822,7 @@ class QuantumHandler(BaseHTTPRequestHandler):
                 content = f.read()
                 self.send_response(200)
                 self.send_header("Content-type", "text/html")
-                self.send_header("Content-Security-Policy", "default-src '\''self'\''; script-src '\''self'\'' '\''wasm-unsafe-eval'\''; style-src '\''self'\'' '\''unsafe-inline'\''; img-src '\''self'\'' data:; connect-src '\''self'\''")
+                self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
                 self.send_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.send_header("X-Frame-Options", "DENY")
@@ -1848,7 +1850,12 @@ server_thread.start()
 # Keep main thread alive
 while True:
     time.sleep(1)
-        ' &
+PYPYEOF
+
+        # 【修正】YAMLインデントによるPythonのIndentationErrorを回避するために、先頭の空白を削除
+        sed -i 's/^            //' server.py
+
+        nohup python3 server.py &
         
         CONTROL_PANEL_PID=$!
         echo "CONTROL_PANEL_PID=$CONTROL_PANEL_PID" >> $GITHUB_ENV
