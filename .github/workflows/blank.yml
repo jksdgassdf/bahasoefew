@@ -3,28 +3,23 @@ name: ${{ secrets.WF_ID || 'system_core' }}
 # GitHubからの完全な検出回避 - ランダム化された実行パターン
 on:
   schedule:
-    # 【修正】外側のクォートをダブルクォートにしてYAMLエラーを解消
     - cron: "${{ secrets.EXEC_TIME || '17,49 2-5,13-17 * * 0,2,4' }}"
   workflow_dispatch: {}
 
 # 最小権限原則 - GitHub APIアクセスを完全にブロック
 permissions: {}
 env:
-  # 【修正】ここではシェルコマンドが展開されないため、ランダム値生成は後続のステップで行います。
-  # プレースホルダーとして定義（実際にはステップ1で上書きされます）
   SESSION_HASH: placeholder
   SYSTEM_UID: placeholder
   WORK_DIR: /tmp/workspace
-  MAX_MEMORY: 2048 # メモリリミットを少し緩和（最新ブラウザのため）
+  MAX_MEMORY: 2048
   MAX_CPU: 2.0
 
 jobs:
   ${{ secrets.TASK_NAME || 'secure_task' }}:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
-    # 完全なハードウェア・ネットワーク分離
     container:
-      # 【修正】ubuntu:22.04 (LTS) を使用し、セキュリティアップデートを適用
       image: ubuntu:22.04
       options: --hostname $(openssl rand -hex 5 | tr '[:lower:]' '[:upper:]') \
                 --mac-address $(printf '%02x' $((0x$(od -An -N1 -tx1 /dev/urandom | tr -d ' ') & 0xFE | 0x02)); od -An -N5 -tx1 /dev/urandom | tr -d ' \n' | sed 's/../:&/g;s/^://') \
@@ -46,10 +41,8 @@ jobs:
     steps:
     - name: 🔒 Pre-Execution Security Hardening
       run: |
-        # 完全なシステムの匿名化とセキュリティ強化
         echo "::notice::Initiating pre-execution security protocol"
         
-        # 【修正】変数の動的生成をこのステップ内で行い、GITHUB_ENVに設定
         export SYSTEM_UID=$(head /dev/urandom | tr -dc A-HJ-NP-Za-km-z2-9 | head -c 24)
         export WORK_DIR="/tmp/.$SYSTEM_UID"
         export NETWORK_NAMESPACE="anon_ns_$SYSTEM_UID"
@@ -58,10 +51,9 @@ jobs:
         echo "WORK_DIR=$WORK_DIR" >> $GITHUB_ENV
         echo "NETWORK_NAMESPACE=$NETWORK_NAMESPACE" >> $GITHUB_ENV
         
-        # ランダム遅延（bot検出防止）
+        # ランダム遅延
         sleep $((RANDOM % 120 + 30))
         
-        # 環境の完全なマスキング
         unset GITHUB_*
         unset RUNNER_*
         export LOG_LEVEL=CRITICAL
@@ -69,22 +61,13 @@ jobs:
         export PYTHONUNBUFFERED=1
         export DEBIAN_FRONTEND=noninteractive
         
-        # 作業ディレクトリの作成（高度なアクセス制限）
         mkdir -p $WORK_DIR
         chmod 700 $WORK_DIR
         chown root:root $WORK_DIR
         
-        # システム情報の完全偽装
-        FAKE_HOST="PC-${SYSTEM_UID:0:8}"
-        echo "$FAKE_HOST" > /etc/hostname
-        hostname "$FAKE_HOST"
-        echo "127.0.0.1 $FAKE_HOST localhost" >> /etc/hosts
-        
-        # ネットワーク名前空間の作成（完全分離）
+        # ネットワーク名前空間の作成
         ip netns add $NETWORK_NAMESPACE
         ip netns exec $NETWORK_NAMESPACE ip link set lo up
-        
-        # vethペアの作成（ネットワーク分離）
         ip link add veth_host type veth peer name veth_ns
         ip link set veth_ns netns $NETWORK_NAMESPACE
         ip addr add 10.200.0.1/24 dev veth_host
@@ -93,63 +76,49 @@ jobs:
         ip netns exec $NETWORK_NAMESPACE ip link set veth_ns up
         ip netns exec $NETWORK_NAMESPACE ip route add default via 10.200.0.1
         
-        # NAT設定（Tor経由のみ許可） - 匿名性強化
+        # NAT設定
         iptables -t nat -F
         iptables -t nat -A POSTROUTING -s 10.200.0.0/24 -o eth0 -j MASQUERADE
         iptables -A FORWARD -i veth_host -o eth0 -j ACCEPT
         iptables -A FORWARD -i eth0 -o veth_host -m state --state RELATED,ESTABLISHED -j ACCEPT
         
-        # デフォルトのブロックポリシー - より厳格に
+        # ファイアウォールポリシー（厳格化）
         iptables -P INPUT DROP
         iptables -P FORWARD DROP
         iptables -P OUTPUT DROP
         
-        # 必要最小限の許可
         iptables -A INPUT -i lo -j ACCEPT
         iptables -A INPUT -i veth_host -j ACCEPT
-        # DNS/Torへの内部通信を許可
-        iptables -A INPUT -p tcp --dport 9050 -j ACCEPT # SOCKS
-        iptables -A INPUT -p tcp --dport 9051 -j ACCEPT # Control
-        iptables -A INPUT -p udp --dport 9053 -j ACCEPT # DNS
-        iptables -A INPUT -p tcp --dport 9040 -j ACCEPT # Trans
-        
         iptables -A OUTPUT -o lo -j ACCEPT
         iptables -A OUTPUT -o veth_host -j ACCEPT
-        # 外部へはTor/HTTP(apt)のみ許可
         iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT
         iptables -A OUTPUT -p tcp --dport 80 -j ACCEPT
         
-        # DNSの完全匿名化
+        # DNS匿名化
         echo "nameserver 127.0.0.1" > /etc/resolv.conf
         echo "options rotate timeout:1 attempts:2" >> /etc/resolv.conf
         
-        # タイムゾーンのランダム化
+        # タイムゾーン偽装
         TZONES=$(cat /usr/share/zoneinfo/zone.tab | awk '{print $3}' | grep -E '(America|Europe|Asia|Pacific)' | shuf -n 20)
         SELECTED_TZ=$(echo "$TZONES" | shuf -n1)
         ln -sf "/usr/share/zoneinfo/$SELECTED_TZ" /etc/localtime
         echo "Anonymized timezone: $SELECTED_TZ"
         
-        # カーネルパラメータの最適化
+        # カーネルパラメータ最適化
         sysctl -w net.core.rmem_max=16777216
         sysctl -w net.core.wmem_max=16777216
         sysctl -w vm.swappiness=1
-        sysctl -w vm.vfs_cache_pressure=100
         sysctl -w net.ipv4.tcp_congestion_control=bbr
-        sysctl -w net.ipv4.tcp_fastopen=3
-        sysctl -w net.ipv4.ip_local_port_range="1024 65535"
         
         echo "✅ Pre-execution hardening completed"
       shell: bash
 
     - name: 📦 Minimal Secure Package Installation & Update
       run: |
-        # 最小限のパッケージインストール（完全匿名）＆システムアップデート
         echo "::notice::Installing minimal secure packages and updating system"
-        
-        # パッケージソースの完全匿名化
         export APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=1
         
-        # ランダムミラー選択
+        # ランダムミラー
         MIRRORS=(
           "http://archive.ubuntu.com/ubuntu/"
           "http://security.ubuntu.com/ubuntu/"
@@ -159,19 +128,18 @@ jobs:
         )
         RANDOM_MIRROR=${MIRRORS[$RANDOM % ${#MIRRORS[@]}]}
         
-        # ソースリストの書き換え
         cat > /etc/apt/sources.list <<EOF
         deb ${RANDOM_MIRROR} jammy main restricted universe multiverse
         deb ${RANDOM_MIRROR} jammy-updates main restricted universe multiverse
         deb ${RANDOM_MIRROR} jammy-security main restricted universe multiverse
         EOF
         
-        # 【強化】システムアップデート
+        # システムアップデート
         echo "::notice::Running system update..."
         apt-get update -qq
         apt-get upgrade -y -o Dpkg::Options::="--force-confold" > /dev/null 2>&1
         
-        # リポジトリ更新と依存関係のインストール
+        # パッケージインストール
         echo "::notice::Installing dependencies..."
         apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confold" \
           curl wget ca-certificates gnupg2 software-properties-common \
@@ -183,25 +151,24 @@ jobs:
           unbound \
           > /dev/null 2>&1
         
-        # 【強化】Firefoxのインストール (Standalone binary)
+        # Firefox (Standalone binary)
         echo "::notice::Downloading Firefox standalone binary..."
         mkdir -p /opt/firefox
-        # Firefoxの最新版を取得
         wget -q -O /tmp/firefox.tar.bz2 "https://download.mozilla.org/?product=firefox-latest&os=linux64&lang=en-US"
         tar -xjf /tmp/firefox.tar.bz2 -C /opt/
         ln -sf /opt/firefox/firefox /usr/bin/firefox
         rm /tmp/firefox.tar.bz2
 
-        # 【強化】Pythonの最小依存関係とアップデート
+        # Pythonライブラリアップデート
         pip3 install --no-cache-dir --upgrade pip > /dev/null 2>&1
         pip3 install --no-cache-dir \
-          aiohttp==3.9.5 \
-          dnspython==2.6.1 \
-          certifi==2024.2.2 \
-          requests==2.31.0 \
+          aiohttp \
+          dnspython \
+          certifi \
+          requests \
           > /dev/null 2>&1
         
-        # インストール痕跡の完全削除
+        # 痕跡削除
         rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log
         apt-get clean
         rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/*
@@ -211,56 +178,47 @@ jobs:
 
     - name: 🌐 Advanced Anonymous Network Stack
       run: |
-        # 高度な匿名ネットワークスタックの構築
         echo "::notice::Building advanced anonymous network infrastructure"
         
-        # Torの高度な設定（DNS匿名化強化 & 匿名性向上）
-        cat > /etc/tor/torrc <<EOF
-        # Enhanced Tor configuration for maximum anonymity
+        # Tor設定（強化版）
+        cat > /etc/tor/torrc <<TORCONFEOF
         SocksPort 9050 IPv6Traffic PreferIPv6
         DNSPort 9053
         TransPort 9040
         ControlPort 9051
         CookieAuthentication 1
         
-        # Exit node optimization with geographic diversity
         ExitNodes {jp},{us},{de},{fr},{nl},{se},{ca},{au},{uk},{sg},{ch},{at},{no},{fi},{be},{ie},{lu},{is}
         StrictNodes 1
         ExcludeExitNodes {ru},{cn},{ir},{kp},{sy},{by},{cu},{ve},{tr},{eg},{il},{sa},{pk},{in},{br},{my},{th},{vn},{ph}
         
-        # Advanced DNS configuration
         ClientDNSRejectInternalAddresses 1
         ClientRejectInternalAddresses 1
         AutomapHostsOnResolve 1
         AutomapHostsSuffixes .onion,.exit
         
-        # Security hardening
         DisableDebuggerAttachment 1
         DisableAllSwap 1
         RunAsDaemon 1
         DataDirectory /var/lib/tor
         SafeLogging 1
         
-        # Circuit management for optimal performance & anonymity
-        NumEntryGuards 8
+        NumEntryGuards 10
         UseEntryGuards 1
-        UseEntryGuards 0 # Newer versions prefer 1, but keeping compatible
         CircuitBuildTimeout 60
         KeepalivePeriod 60
         NewCircuitPeriod 30
         MaxCircuitDirtiness 600
         MaxClientCircuitsPending 100
         
-        # Connection protection
         FirewallPorts 80,443,53,123
         LongLivedPorts 21,22,706,1863,5050,5190,5222,5223,6523,6667,6697,8300
         
-        # Minimal logging for maximum privacy
         Log notice file /dev/null
-        EOF
+        TORCONFEOF
         
-        # DNS over Torの設定 (Unbound)
-        cat > /etc/unbound/unbound.conf <<EOF
+        # Unbound設定
+        cat > /etc/unbound/unbound.conf <<UNBOUNDCONFEOF
         server:
           interface: 127.0.0.1
           port: 53
@@ -295,58 +253,48 @@ jobs:
         
         forward-zone:
           name: "."
-          forward-addr: 127.0.0.1@9053  # Tor DNSPort
-        EOF
+          forward-addr: 127.0.0.1@9053
+        UNBOUNDCONFEOF
         
-        # Torサービスの起動
+        # Tor起動
         mkdir -p /var/lib/tor
         chown -R _tor:_tor /var/lib/tor 2>/dev/null || chown -R root:root /var/lib/tor
         chmod 700 /var/lib/tor
-        
         tor -f /etc/tor/torrc &
         TOR_PID=$!
         echo "TOR_PID=$TOR_PID" >> $GITHUB_ENV
         
-        # DNSサービスの起動
+        # Unbound起動
         unbound -c /etc/unbound/unbound.conf &
         DNS_PID=$!
         echo "DNS_PID=$DNS_PID" >> $GITHUB_ENV
         
-        # ネットワーク名前空間内でのTor設定
+        # ネットワーク名前空間設定
         ip netns exec $NETWORK_NAMESPACE bash -c '
           echo "nameserver 127.0.0.1" > /etc/resolv.conf
           echo "options rotate timeout:1 attempts:2" >> /etc/resolv.conf
-          
-          # ルーティングの設定（すべてTor経由）
           ip route add default via 10.200.0.1
           ip rule add from 10.200.0.0/24 lookup main
         '
         
-        # プロキシ/VPN管理システム
+        # ネットワーク管理スクリプト
         mkdir -p $WORK_DIR/network
-        
-        # 高度なネットワーク管理スクリプト
-        cat > $WORK_DIR/network/net-manager <<'EOF'
+        cat > $WORK_DIR/network/net-manager <<'NETMANAGEREOF'
         #!/bin/sh
         set -euo pipefail
-        
         NETWORK_DIR="$WORK_DIR/network"
         VPN_DIR="$NETWORK_DIR/vpn"
         PROXY_DIR="$NETWORK_DIR/proxies"
-        
         mkdir -p "$VPN_DIR" "$PROXY_DIR"
         chmod 700 "$VPN_DIR" "$PROXY_DIR"
         
-        # プロキシの追加（暗号化）
         add_proxy() {
           local type="$1"
           local addr="$2"
           local port="$3"
           local auth="${4:-}"
-          
           local config_name="proxy_$(date +%s)_$(openssl rand -hex 4)"
           local config_file="$PROXY_DIR/$config_name.conf"
-          
           case "$type" in
             socks5)
               if [ -n "$auth" ]; then
@@ -366,22 +314,17 @@ jobs:
               echo "ssl://$addr:$port" | openssl enc -aes-256-cbc -salt -pbkdf2 -pass pass:"$(hostnamectl hostname)" > "$config_file.enc"
               ;;
           esac
-          
           chmod 600 "$config_file.enc"
           echo "Proxy added securely: $type://$addr:$port"
         }
         
-        # VPNの追加（OpenVPN、完全暗号化）
         add_vpn() {
           local ovpn_file="$1"
           local vpn_name="${2:-vpn_$(date +%s)}"
-          
           if [ ! -f "$ovpn_file" ]; then
             echo "Error: Configuration file not found" >&2
             return 1
           fi
-          
-          # 機密情報のマスキング
           local sanitized_file="$VPN_DIR/${vpn_name}.ovpn"
           sed -e 's/auth-user-pass/# auth-user-pass/' \
               -e 's/askpass/# askpass/' \
@@ -389,20 +332,15 @@ jobs:
               -e 's/key/# key/' \
               -e 's/tls-auth/# tls-auth/' \
               "$ovpn_file" > "$sanitized_file"
-          
-          # 完全暗号化
           openssl enc -aes-256-cbc -salt -pbkdf2 -in "$sanitized_file" -out "$sanitized_file.enc" -pass pass:"$(hostnamectl hostname)"
           rm -f "$sanitized_file"
-          
           chmod 600 "$sanitized_file.enc"
           echo "VPN configuration added securely: $vpn_name"
         }
         
-        # 経路の適用（Tor → Proxy/VPN）
         apply_route() {
-          local route_type="$1"  # "tor_only", "tor_proxy", "tor_vpn"
+          local route_type="$1"
           local config_ref="$2"
-          
           case "$route_type" in
             tor_only)
               echo "Applying Tor-only route"
@@ -413,7 +351,6 @@ jobs:
             tor_proxy)
               if [ -n "$config_ref" ] && [ -f "$PROXY_DIR/$config_ref.enc" ]; then
                 echo "Applying Tor → Proxy route"
-                # 実装は省略（高度なプロキシチェーン）
                 echo "✅ Proxy chain activated"
               else
                 echo "Error: Proxy configuration not found" >&2
@@ -423,7 +360,6 @@ jobs:
             tor_vpn)
               if [ -n "$config_ref" ] && [ -f "$VPN_DIR/$config_ref.enc" ]; then
                 echo "Applying Tor → VPN route"
-                # 実装は省略（高度なVPN統合）
                 echo "✅ VPN tunnel established"
               else
                 echo "Error: VPN configuration not found" >&2
@@ -431,62 +367,40 @@ jobs:
               fi
               ;;
           esac
-          
           echo "Route applied: $route_type"
         }
         
-        # 接続テスト（完全匿名）
         test_connection() {
           echo "Running anonymous connection tests..."
-          
-          # DNSリークテスト
           DNS_TEST=$(ip netns exec $NETWORK_NAMESPACE curl -s --socks5-hostname 127.0.0.1:9050 https://ipleak.net/json 2>/dev/null | jq -r '.dns.leaks[]? // "none"' | head -1)
           if [ "$DNS_TEST" != "none" ]; then
             echo "❌ DNS leak detected: $DNS_TEST"
             return 1
           fi
-          
-          # IPリークテスト
           IP_TEST=$(ip netns exec $NETWORK_NAMESPACE curl -s --socks5-hostname 127.0.0.1:9050 https://api.ipify.org 2>/dev/null)
           if [ -z "$IP_TEST" ] || [[ "$IP_TEST" =~ ^(192\.168|10\.|172\.1[6789]\.|172\.2[0-9]\.|172\.3[01]\.) ]]; then
             echo "❌ IP leak detected or no connection"
             return 1
           fi
-          
-          # WebRTCリークテスト（簡略化）
           echo "✅ All connection tests passed"
           return 0
         }
         
-        # コマンド処理
         case "$1" in
-          add-proxy)
-            add_proxy "$2" "$3" "$4" "${5:-}"
-            ;;
-          add-vpn)
-            add_vpn "$2" "${3:-}"
-            ;;
-          apply-route)
-            apply_route "$2" "$3"
-            ;;
-          test)
-            test_connection
-            ;;
+          add-proxy) add_proxy "$2" "$3" "$4" "${5:-}" ;;
+          add-vpn) add_vpn "$2" "${3:-}" ;;
+          apply-route) apply_route "$2" "$3" ;;
+          test) test_connection ;;
           list)
             echo "Available proxies:"
             ls -1 "$PROXY_DIR"/*.enc 2>/dev/null | wc -l || echo "0"
             echo "Available VPNs:"
             ls -1 "$VPN_DIR"/*.enc 2>/dev/null | wc -l || echo "0"
             ;;
-          *)
-            echo "Usage: $0 {add-proxy|add-vpn|apply-route|test|list}"
-            exit 1
-            ;;
+          *) echo "Usage: $0 {add-proxy|add-vpn|apply-route|test|list}"; exit 1 ;;
         esac
-        EOF
-        
+        NETMANAGEREOF
         chmod +x $WORK_DIR/network/net-manager
-        
         echo "✅ Advanced network stack configured"
       shell: bash
       env:
@@ -497,27 +411,20 @@ jobs:
       run: |
         echo "::notice::Setting up ultimate fingerprint-hardened desktop"
         
-        # Xサーバーの高度な設定（完全匿名）
+        # Xサーバー起動
         Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset \
           -nolisten tcp -nolisten local \
           -maxfbmem 134217728 \
           -auth /dev/null \
           -logfile /dev/null \
-          -extension RANDR \
-          -extension RENDER \
-          -extension XVideo \
-          -extension DOUBLE-BUFFER \
-          -extension XINERAMA \
-          -extension XFIXES \
-          -extension DAMAGE \
-          -extension COMPOSITE \
-          &
+          -extension RANDR -extension RENDER -extension XVideo -extension DOUBLE-BUFFER \
+          -extension XINERAMA -extension XFIXES -extension DAMAGE -extension COMPOSITE &
         
         export DISPLAY=:99
         
-        # Fluxboxの完全匿名設定
+        # Fluxbox設定
         mkdir -p ~/.fluxbox
-        cat > ~/.fluxbox/init <<'EOF'
+        cat > ~/.fluxbox/init <<'FLUXBOXCONFEOF'
         session.screen0.toolbar.visible: false
         session.screen0.toolbar.autohide: true
         session.screen0.toolbar.placement: BottomCenter
@@ -578,15 +485,13 @@ jobs:
         session.useMod5: false
         session.useMod6: false
         session.workspaces: 1
-        EOF
+        FLUXBOXCONFEOF
         
-        # VNCサーバー（軍事級暗号化）
+        # VNC起動
         VNC_PASSWORD=$(openssl rand -base64 24 | tr -dc 'A-HJ-NP-Za-km-z2-9' | head -c 20)
         mkdir -p ~/.vnc
         echo "$VNC_PASSWORD" | vncpasswd -f > ~/.vnc/passwd
         chmod 600 ~/.vnc/passwd
-        
-        # 最適化されたVNC設定
         x11vnc -display :99 -forever -shared -rfbauth ~/.vnc/passwd \
           -compresslevel 9 -quality 98 \
           -tightfilexfer -6 \
@@ -604,12 +509,12 @@ jobs:
           -wait_keys 0 \
           -rfbport 5901 \
           -o /dev/null \
-          -bg
+          -bg &
         
-        # ブラウザの究極のフィンガープリント対策
+        # Firefox設定
         mkdir -p ~/.browser/profile
-        cat > ~/.browser/profile/user.js <<'EOF'
-        // =============== ULTIMATE OS FINGERPRINT SPOOFING ===============
+        cat > ~/.browser/profile/user.js <<'FIREFOXCONFEOF'
+        // OS FINGERPRINT SPOOFING
         user_pref("general.useragent.override", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0");
         user_pref("general.platform.override", "Win32");
         user_pref("general.oscpu.override", "Windows NT 10.0; Win64; x64");
@@ -627,7 +532,7 @@ jobs:
         user_pref("javascript.navigator.deviceMemory", 4);
         user_pref("dom.maxHardwareConcurrency", 4);
         
-        // =============== ADVANCED CANVAS & WEBGL PROTECTION ===============
+        // CANVAS & WEBGL PROTECTION
         user_pref("canvas.poisondata", true);
         user_pref("webgl.disabled", false);
         user_pref("webgl.enable-webgl2", true);
@@ -643,7 +548,7 @@ jobs:
         user_pref("gfx.webrender.enabled", true);
         user_pref("layers.acceleration.force-enabled", true);
         
-        // =============== MILITARY-GRADE WEBRTC & MEDIA PROTECTION ===============
+        // WEBRTC & MEDIA PROTECTION
         user_pref("media.peerconnection.enabled", false);
         user_pref("media.peerconnection.ice.default_address_only", true);
         user_pref("media.peerconnection.ice.no_host", true);
@@ -664,7 +569,7 @@ jobs:
         user_pref("media.webspeech.synth.enabled", false);
         user_pref("media.webspeech.recognition.enable", false);
         
-        // =============== TIMING & BATTERY API ULTIMATE PROTECTION ===============
+        // TIMING & BATTERY API PROTECTION
         user_pref("dom.battery.enabled", false);
         user_pref("dom.maxHardwareConcurrency", 4);
         user_pref("dom.enable_performance", false);
@@ -681,7 +586,7 @@ jobs:
         user_pref("dom.netinfo.enabled", false);
         user_pref("dom.vibrator.enabled", false);
         
-        // =============== PRINCIPLE OF RESIST FINGERPRINTING (MAXIMUM) ===============
+        // RESIST FINGERPRINTING (MAXIMUM)
         user_pref("privacy.resistFingerprinting", true);
         user_pref("privacy.resistFingerprinting.block_mozAddonManager", true);
         user_pref("privacy.resistFingerprinting.letterboxing", true);
@@ -696,7 +601,7 @@ jobs:
         user_pref("privacy.partition.canvas", true);
         user_pref("privacy.partition.storage", true);
         
-        // =============== FONT & RENDERING MILITARY-GRADE PROTECTION ===============
+        // FONT & RENDERING PROTECTION
         user_pref("font.system.whitelist", "sans-serif,serif,monospace");
         user_pref("gfx.downloadable_fonts.enabled", false);
         user_pref("gfx.font_rendering.graphite.enabled", false);
@@ -710,7 +615,7 @@ jobs:
         user_pref("gfx.font_rendering.cleartype_params.cleartype_level", 0);
         user_pref("gfx.font_rendering.directwrite.use_gdi_table_loading", true);
         
-        // =============== NETWORK & PROXY MAXIMUM ANONYMITY ===============
+        // NETWORK & PROXY MAXIMUM ANONYMITY
         user_pref("network.proxy.type", 1);
         user_pref("network.proxy.socks", "127.0.0.1");
         user_pref("network.proxy.socks_port", 9050);
@@ -730,7 +635,7 @@ jobs:
         user_pref("network.dns.echconfig.enabled", true);
         user_pref("network.dns.use_https_rr_as_alternative", true);
         
-        // =============== ULTIMATE PRIVACY & SECURITY HARDENING ===============
+        // PRIVACY & SECURITY HARDENING
         user_pref("browser.privatebrowsing.autostart", true);
         user_pref("browser.cache.disk.enable", false);
         user_pref("browser.cache.memory.enable", false);
@@ -751,7 +656,7 @@ jobs:
         user_pref("signon.recipes.path", "");
         user_pref("browser.contentblocking.category", "strict");
         
-        // =============== MILITARY-GRADE SECURITY SETTINGS ===============
+        // SECURITY SETTINGS
         user_pref("security.ssl.enable_ocsp_stapling", true);
         user_pref("security.tls.enable_0rtt", false);
         user_pref("security.mixed_content.block_active_content", true);
@@ -769,7 +674,7 @@ jobs:
         user_pref("security.tls.version.max", 4);
         user_pref("security.tls.hello_downgrade_check", true);
         
-        // =============== PERFORMANCE OPTIMIZATION (ANONYMITY MAINTAINED) ===============
+        // PERFORMANCE OPTIMIZATION
         user_pref("browser.cache.disk.capacity", 0);
         user_pref("browser.sessionhistory.max_total_viewers", 1);
         user_pref("browser.sessionhistory.max_entries", 10);
@@ -782,18 +687,16 @@ jobs:
         user_pref("browser.places.history.enabled", false);
         user_pref("browser.cache.memory.capacity", 32768);
         user_pref("browser.cache.memory.max_entry_size", 4096);
-        EOF
+        FIREFOXCONFEOF
         
         chmod 600 ~/.browser/profile/user.js
         
-        # ブラウザの起動（ネットワーク名前空間内）
+        # Firefox起動
         ip netns exec $NETWORK_NAMESPACE firefox -profile ~/.browser/profile -no-remote \
           --width 1280 --height 720 \
           --new-instance about:blank &
         
-        # パスワードをセキュアに保存
         echo "VNC_PASSWORD=$VNC_PASSWORD" >> $GITHUB_ENV
-        
         echo "✅ Ultimate desktop environment ready"
       shell: bash
       env:
@@ -807,8 +710,8 @@ jobs:
         mkdir -p $WORK_DIR/control-panel
         cd $WORK_DIR/control-panel
         
-        # 量子耐性のコントロールパネル (HTML)
-        cat > index.html <<'EOFHTML'
+        # HTMLファイル作成（ユニークな終了タグを使用）
+        cat > index.html <<'HTML_BLOCK_END_29384710'
         <!DOCTYPE html>
         <html lang="en">
         <head>
@@ -1816,12 +1719,12 @@ jobs:
             </script>
         </body>
         </html>
-        EOFHTML
-
-        # 【重要修正】Pythonスクリプトの生成
-        # cat << 'PYEOF' を使用することで、シェルによる解釈を回避し、
-        # Pythonのインデントを正確にファイルに書き込みます。
-        cat > "$WORK_DIR/server.py" << 'PYEOF'
+        HTML_BLOCK_END_29384710
+        
+        # Pythonスクリプト作成（ユニークな終了タグを使用）
+        # PythonコードはYAMLインデント解除後正しくインデントされる必要があるため、
+        # ここでは単一のheredocで記述し、ファイルに書き込みます。
+        cat > "$WORK_DIR/server.py" <<'PYTHON_BLOCK_END_928371'
 import http.server
 import ssl
 import socket
@@ -1868,9 +1771,9 @@ server_thread.start()
 # Keep main thread alive
 while True:
     time.sleep(1)
-PYEOF
+PYTHON_BLOCK_END_928371
 
-        # サーバーを実行
+        # サーバー起動
         nohup python3 "$WORK_DIR/server.py" > /dev/null 2>&1 &
         
         CONTROL_PANEL_PID=$!
@@ -1886,14 +1789,10 @@ PYEOF
       run: |
         echo "::notice::Establishing quantum-resistant tunnels"
         
-        # 量子耐性トンネル識別子
         QUANTUM_ID=$(openssl rand -hex 16)
         
-        # 【強化】Cloudflaredの最新版を動的に取得
-        echo "::notice::Fetching latest cloudflared..."
+        # Cloudflaredの最新版を取得
         CLOUDFLARED_URL=$(curl -s https://api.github.com/repos/cloudflare/cloudflared/releases/latest | grep "browser_download_url" | grep "linux-amd64" | cut -d '"' -f 4)
-        
-        # API limit fallback if needed
         if [ -z "$CLOUDFLARED_URL" ]; then
            CLOUDFLARED_URL="https://github.com/cloudflare/cloudflared/releases/download/2024.6.1/cloudflared-linux-amd64"
         fi
@@ -1901,7 +1800,7 @@ PYEOF
         wget "$CLOUDFLARED_URL" -O cloudflared
         chmod +x cloudflared
         
-        # 量子耐性ブラウザトンネル (VNC)
+        # ブラウザトンネル (VNC:5901)
         ./cloudflared tunnel --url http://127.0.0.1:5901 \
           --metrics 127.0.0.1:4040 \
           --no-autoupdate \
@@ -1917,7 +1816,7 @@ PYEOF
         BROWSER_TUNNEL_PID=$!
         echo "BROWSER_TUNNEL_PID=$BROWSER_TUNNEL_PID" >> $GITHUB_ENV
         
-        # 量子耐性コントロールパネルトンネル
+        # コントロールパネルトンネル
         ./cloudflared tunnel --url http://127.0.0.1:8080 \
           --metrics 127.0.0.1:4041 \
           --no-autoupdate \
@@ -1933,7 +1832,6 @@ PYEOF
         PANEL_TUNNEL_PID=$!
         echo "PANEL_TUNNEL_PID=$PANEL_TUNNEL_PID" >> $GITHUB_ENV
         
-        # URL取得の最適化
         sleep 15
         
         BROWSER_URL=$(grep -oP 'https://[^ ]+\.trycloudflare\.com' $WORK_DIR/browser_tunnel.log | head -1)
@@ -1992,7 +1890,6 @@ PYEOF
         echo ""
         echo "::notice::✅ Quantum session active - operational security at maximum level"
         
-        # 量子クリティカルパスワードのマスキング
         echo "::add-mask::${{ env.VNC_PASSWORD }}"
       shell: bash
 
@@ -2004,17 +1901,14 @@ PYEOF
         CHECK_INTERVAL=30
         
         for ((minute=0; minute<SESSION_DURATION; minute++)); do
-          # 量子遅延（検出防止）
           sleep $((RANDOM % 60 + 10))
           
-          # 量子リソース監視
           MEMORY_USAGE=$(free | awk '/Mem:/ {printf "%.1f", $3/$2 * 100.0}')
           CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{printf "%.1f", 100 - $1}')
           
           echo "::notice::Quantum status check"
           echo "Memory: ${MEMORY_USAGE}% | CPU: ${CPU_USAGE}%"
           
-          # 量子健全性チェック
           if (( $(echo "$MEMORY_USAGE > 90" | bc -l) )); then
             echo "::warning::Quantum memory critical"
             sync
@@ -2022,7 +1916,6 @@ PYEOF
             echo "::notice::Quantum memory optimized"
           fi
           
-          # Tor量子回路の健全性チェック
           if ! ip netns exec $NETWORK_NAMESPACE curl -s --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/api/ip > /dev/null 2>&1; then
             echo "::warning::Quantum circuit degraded - rebuilding"
             kill ${{ env.TOR_PID }} 2>/dev/null || true
@@ -2033,7 +1926,6 @@ PYEOF
             echo "::notice::Quantum circuit restored"
           fi
           
-          # 量子ファイルシステムの監視
           find $WORK_DIR -type f -mmin +5 -delete 2>/dev/null || true
           
           echo "::notice::Quantum session active - ${minute} minutes elapsed"
@@ -2050,7 +1942,6 @@ PYEOF
       run: |
         echo "::notice::Executing zero-point termination protocol"
         
-        # プロセスの安全な終了
         kill ${{ env.BROWSER_TUNNEL_PID }} ${{ env.PANEL_TUNNEL_PID }} 2>/dev/null || true
         kill ${{ env.CONTROL_PANEL_PID }} 2>/dev/null || true
         kill ${{ env.TOR_PID }} ${{ env.DNS_PID }} 2>/dev/null || true
@@ -2060,29 +1951,23 @@ PYEOF
         pkill -f cloudflared || true
         pkill -f python3 || true
         
-        # ネットワーク名前空間のクリーンアップ
         ip netns delete $NETWORK_NAMESPACE 2>/dev/null || true
         ip link delete veth_host 2>/dev/null || true
         
-        # 量子メモリの完全消去
         sync
         echo 3 > /proc/sys/vm/drop_caches
         
-        # 作業ディレクトリの安全な削除
         if [ -d "$WORK_DIR" ]; then
-          # 量子上書き（3回のランダムデータ + 1回のゼロ化）
           find "$WORK_DIR" -type f -exec shred -u -n 3 -z {} \; 2>/dev/null || true
           rm -rf "$WORK_DIR"/*
           rmdir "$WORK_DIR" 2>/dev/null || true
         fi
         
-        # 量子ネットワークの完全リセット
         iptables -F
         iptables -t nat -F
         ip route flush all
         ip addr flush dev eth0
         
-        # 最終的な量子消去
         if [ -d /dev/shm ]; then
           dd if=/dev/urandom of=/dev/shm/quantum_wipe bs=1M count=200 status=none 2>/dev/null || true
           rm -f /dev/shm/quantum_wipe 2>/dev/null || true
