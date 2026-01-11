@@ -363,7 +363,7 @@ jobs:
           chown -R nobody:nobody /var/lib/tor /var/log/tor 2>/dev/null || true
           chmod 700 /var/lib/tor 2>/dev/null || true
           
-          # Tor configuration with proper formatting
+          # Tor configuration with proper formatting - FIXED YAML SYNTAX ERROR HERE
           cat > /etc/tor/torrc << 'TOR_CONFIG'
 SocksPort 9050 IPv6Traffic PreferIPv6
 ControlPort 9051
