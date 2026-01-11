@@ -354,7 +354,7 @@ jobs:
           echo "::endgroup::"
         }
         
-        # Advanced Tor configuration with proper YAML escaping
+        # Advanced Tor configuration - FIXED YAML SYNTAX ERROR
         setup_tor() {
           echo "::group::🧅 Configuring Tor with maximum anonymity"
           
@@ -363,8 +363,8 @@ jobs:
           chown -R nobody:nobody /var/lib/tor /var/log/tor 2>/dev/null || true
           chmod 700 /var/lib/tor 2>/dev/null || true
           
-          # Tor configuration with proper formatting - FIXED YAML SYNTAX ERROR HERE
-          cat > /etc/tor/torrc << 'TOR_CONFIG'
+          # Tor configuration with proper formatting - PROPER YAML ESCAPING
+          cat > /etc/tor/torrc << TOR_CONFIG
 SocksPort 9050 IPv6Traffic PreferIPv6
 ControlPort 9051
 CookieAuthentication 1
@@ -448,7 +448,7 @@ TOR_CONFIG
         setup_network_chain_manager() {
           echo "::group::⛓️ Setting up advanced network chain manager"
           
-          cat > /usr/local/bin/network-chain << 'CHAIN_SCRIPT'
+          cat > /usr/local/bin/network-chain << CHAIN_SCRIPT
 #!/bin/sh
 set -eu
 
@@ -703,7 +703,7 @@ CHAIN_SCRIPT
           
           mkdir -p ~/.fluxbox
           
-          cat > ~/.fluxbox/startup << 'FLUXBOX_CONFIG'
+          cat > ~/.fluxbox/startup << FLUXBOX_CONFIG
 #!/bin/sh
 xrdb -load /dev/null
 xsetroot -solid "#1a1a1a"
@@ -776,7 +776,7 @@ FLUXBOX_CONFIG
           
           mkdir -p ~/.firefox/profile
           
-          cat > ~/.firefox/profile/user.js << 'FIREFOX_CONFIG'
+          cat > ~/.firefox/profile/user.js << FIREFOX_CONFIG
 // ===== OS LEVEL FINGERPRINT SPOOFING =====
 user_pref("general.useragent.override", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0");
 user_pref("general.platform.override", "Win32");
@@ -976,7 +976,7 @@ FIREFOX_CONFIG
         }
         
         # Enhanced control panel with comprehensive network mode selection
-        cat > index.html << 'CONTROL_PANEL'
+        cat > index.html << CONTROL_PANEL
 <!DOCTYPE html>
 <html lang="en">
 <head>
