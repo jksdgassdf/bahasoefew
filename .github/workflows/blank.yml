@@ -365,6 +365,7 @@ jobs:
           
           # Tor configuration with proper formatting - FIXED YAML SYNTAX
           # Use single quoted string for the entire config to avoid YAML parsing issues
+          # Note: Heredoc content dedented to column 0 (10 spaces in YAML) to ensure shell parses delimiter correctly
           cat > /etc/tor/torrc << 'TOR_CONFIG'
 SocksPort 9050 IPv6Traffic PreferIPv6
 ControlPort 9051
@@ -450,6 +451,7 @@ TOR_CONFIG
           echo "::group::⛓️ Setting up advanced network chain manager"
           
           # Use single quoted string for the entire script to avoid YAML parsing issues
+          # Dedented to ensure shell heredoc delimiters work correctly
           cat > /usr/local/bin/network-chain << 'CHAIN_SCRIPT'
 #!/bin/sh
 set -eu
